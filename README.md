@@ -6,7 +6,7 @@ tracking error of every method we compared, on two humanoids (Unitree G1 and Rob
 
 PartyMimic is a model-based learner in the SuperMimic family. It fits an online MLP world model, trains the
 policy by backpropagating through 32 imagined steps of that model, and uses a critic beyond the horizon. Its
-training recipe is built for generalization and speed. Project page: [`docs/index.html`](docs/index.html), with
+training recipe is built for generalization and speed. Project page: [roboparty.github.io/PartyMimic](https://roboparty.github.io/PartyMimic/) ([`docs/index.html`](docs/index.html)), with
 videos, the recipe ablation and the SuperMimic full-factor ablation.
 
 ![Loc/Man error against training compute](docs/static/hero.png)
@@ -84,7 +84,7 @@ the pipeline overlaps all transfers with compute (details on the [page](docs/ind
 Linux x86_64, an NVIDIA GPU with a CUDA 12.8 driver, and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone <this repo> partymimic && cd partymimic
+git clone git@github.com:Roboparty/PartyMimic.git partymimic && cd partymimic
 uv sync                    # mjlab, MuJoCo Warp, torch 2.9.0 (CUDA 12.8)
 tools/download_data.sh     # G1 description + 40 G1-retargeted LAFAN1 clips -> data/ (enough for a first run)
 ```
