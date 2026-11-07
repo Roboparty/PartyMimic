@@ -15,6 +15,52 @@ def _linears(m: nn.Module) -> list[nn.Linear]:
     return [x for x in m.modules() if isinstance(x, nn.Linear)]
 
 
+class FlatAdam:
+    """Adam (torch.optim.Adam's arithmetic, capturable: the learning rate is a 0-dim device tensor) on parameters that
+    become views of one flat buffer, their gradients views of another, so a step is a few elementwise kernels over
+    all elements. The fused multi-tensor Adam runs one thread block per 65536 elements: a handful of blocks for the
+    critic, 0.27 ms per step on an RTX 4090 against ~0.03 ms here."""
+
+    def __init__(self, params, lr: float, betas=(0.9, 0.999), eps: float = 1e-8):
+        params = [p for p in params if p.requires_grad]
+        dev = params[0].device
+        n = sum(p.numel() for p in params)
+        self.flat = torch.empty(n, device=dev)
+        self.gflat = torch.zeros(n, device=dev)
+        o = 0
+        for p in params:
+            k = p.numel()
+            self.flat[o : o + k].copy_(p.detach().flatten())
+            p.data = self.flat[o : o + k].view_as(p)
+            p.grad = self.gflat[o : o + k].view_as(p)
+            o += k
+        self.m, self.v = torch.zeros_like(self.flat), torch.zeros_like(self.flat)
+        self.n_step = torch.zeros((), device=dev)
+        self.betas, self.eps = betas, eps
+        self.param_groups = [{"params": params, "lr": torch.tensor(float(lr), device=dev)}]
+
+    def zero_grad(self, set_to_none: bool = True):
+        self.gflat.zero_()  # the gradients stay views of gflat
+
+    @torch.no_grad()
+    def step(self):
+        b1, b2 = self.betas
+        self.n_step.add_(1)
+        self.m.lerp_(self.gflat, 1 - b1)
+        self.v.mul_(b2).addcmul_(self.gflat, self.gflat, value=1 - b2)
+        bc1 = 1 - torch.pow(b1, self.n_step)
+        bc2 = 1 - torch.pow(b2, self.n_step)
+        denom = (self.v.sqrt() / bc2.sqrt()).add_(self.eps)
+        self.flat.sub_(self.m / denom * (self.param_groups[0]["lr"] / bc1))
+
+    def state_dict(self):
+        return {"flat_adam": True, "m": self.m, "v": self.v, "step": self.n_step}
+
+    def load_state_dict(self, sd: dict):
+        assert sd.get("flat_adam"), "optimizer state of another Adam implementation"
+        self.m.copy_(sd["m"]), self.v.copy_(sd["v"]), self.n_step.copy_(sd["step"])
+
+
 class MuonAdam:
     """Muon on hidden matrices of ``mlps`` (all Linear layers except each MLP's first and last), Adam elsewhere.
 
@@ -23,8 +69,9 @@ class MuonAdam:
     tensor learning rate (torch.optim.Muon reads a tensor lr on the host, so a captured step would freeze it)."""
 
     def __init__(self, model: nn.Module, mlps: list[nn.Module], lr: float, betas=(0.9, 0.95), fused: bool = True,
-                 capturable: bool = False, io: bool = False):  # fmt: skip
-        """``io``: the first and last Linear of each MLP on Muon too (Adam only on the vectors)."""
+                 capturable: bool = False, io: bool = False, flat_adam: bool = False):  # fmt: skip
+        """``io``: the first and last Linear of each MLP on Muon too (Adam only on the vectors). ``flat_adam``: the Adam
+        part as FlatAdam (capturable; no gated step)."""
         hidden = {id(l.weight) for m in mlps for l in (_linears(m) if io else _linears(m)[1:-1])}
         muon = [p for p in model.parameters() if id(p) in hidden]
         adam = [p for p in model.parameters() if id(p) not in hidden and p.requires_grad]
@@ -32,7 +79,10 @@ class MuonAdam:
         if capturable:
             dev = muon[0].device
             self.muon = torch.optim.Muon(muon, lr=torch.tensor(float(lr), device=dev), weight_decay=0.0, adjust_lr_fn="match_rms_adamw")
-            self.adam = torch.optim.Adam(adam, lr=torch.tensor(float(lr), device=dev), betas=betas, fused=True, capturable=True)
+            if flat_adam:
+                self.adam = FlatAdam(adam, lr, betas=betas)
+            else:
+                self.adam = torch.optim.Adam(adam, lr=torch.tensor(float(lr), device=dev), betas=betas, fused=True, capturable=True)
         else:
             self.muon = torch.optim.Muon(muon, lr=lr, weight_decay=0.0, adjust_lr_fn="match_rms_adamw")
             self.adam = torch.optim.Adam(adam, lr=lr, betas=betas, fused=fused)
@@ -232,6 +282,38 @@ def check():
         frozen = same(before, snap(m, o))
         okt.fill_(True), graph.replay(), torch.cuda.synchronize()
         chk("gated step in a CUDA graph: ok=False unchanged, ok=True moves", frozen and not same(before, snap(m, o)))
+        # 4. FlatAdam == torch.optim.Adam (eagerly and as a graph replay, changing lr)
+        ref, fa, fg = mk_net(), mk_net(), mk_net()
+        fa.load_state_dict(ref.state_dict()), fg.load_state_dict(ref.state_dict())
+        o_ref = torch.optim.Adam(ref.parameters(), lr=1e-3)
+        o_fa, o_fg = FlatAdam(fa.parameters(), 1e-3), FlatAdam(fg.parameters(), 1e-3)
+        x = torch.randn(512, 8, device=dev)
+        graph = None
+        for i in range(20):
+            lr = 1e-3 * (1 - 0.03 * i)
+            o_ref.param_groups[0]["lr"] = lr
+            o_fa.param_groups[0]["lr"].fill_(lr), o_fg.param_groups[0]["lr"].fill_(lr)
+            for m_, o_ in ((ref, o_ref), (fa, o_fa)):
+                o_.zero_grad(set_to_none=True)
+                ((m_.enc(x) - 1) ** 2).mean().backward()
+                o_.step()
+            if graph is None and i >= 3:
+                torch.cuda.synchronize()
+                graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(graph):
+                    o_fg.zero_grad()
+                    ((fg.enc(x) - 1) ** 2).mean().backward()
+                    o_fg.step()
+            if graph is not None:
+                graph.replay()
+            else:
+                o_fg.zero_grad()
+                ((fg.enc(x) - 1) ** 2).mean().backward()
+                o_fg.step()
+        err = max(float((p - q).abs().max()) for p, q in zip(ref.parameters(), fa.parameters()))
+        err_g = max(float((p - q).abs().max()) for p, q in zip(ref.parameters(), fg.parameters()))
+        chk("FlatAdam == torch.optim.Adam (20 steps, changing lr; eager / CUDA graph)", err < 1e-5 and err_g < 1e-5,
+            f"max |diff| {err:.1e} / {err_g:.1e}")
     print("ALL PASS" if ok else "SOME FAILED")
     return ok
 

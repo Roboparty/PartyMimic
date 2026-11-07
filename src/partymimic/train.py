@@ -158,10 +158,10 @@ assert not args.lr_decay_by or args.lr_decay_ret > 0, "--lr_decay_by needs --lr_
 # the learning rate is a device tensor (filled every iteration) and Adam keeps its step on the GPU, so the captured
 # optimizer steps follow the schedule
 adam_kw = lambda: {"fused": True, "capturable": True, "lr": torch.tensor(args.lr, device=dev)}  # noqa: E731
-if args.wm_opt == "muon" or args.pi_opt == "muon":
-    from partymimic.optim import MuonAdam
+from partymimic.optim import FlatAdam, MuonAdam
+
 if args.wm_opt == "muon":
-    opt_wm = MuonAdam(wm, [wm.net], lr=args.lr, betas=(0.9, 0.999), fused=True, capturable=True)
+    opt_wm = MuonAdam(wm, [wm.net], lr=args.lr, betas=(0.9, 0.999), fused=True, capturable=True, flat_adam=True)
 else:
     opt_wm = torch.optim.Adam(wm.parameters(), **adam_kw())
 if args.pi_opt == "muon":
@@ -172,7 +172,7 @@ else:
 NONFINITE = torch.zeros((), dtype=torch.long, device=dev)  # skipped non-finite policy updates
 pi_avg = torch.optim.swa_utils.AveragedModel(pi, multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(args.pi_ema),
                                              use_buffers=True) if args.pi_ema > 0 else None  # fmt: skip
-opt_v = torch.optim.Adam(critic.parameters(), **adam_kw())
+opt_v = FlatAdam(critic.parameters(), args.lr)
 
 GC_ON = args.v_gcons > 0
 SIL_DIAG = torch.zeros(2, device=dev)  # --sil: share of starts with G > V, self-imitation loss
@@ -249,13 +249,21 @@ def _wm_err(S_hat, s1, mask):
     return (e * mask).sum() / s1.shape[0], e[:, -1]
 
 
-def _imag_step(S, o_hist, a_prev, f, xi, xi_n, g):
-    a = pi(o_hist, g)
+def _imag_step(S, o_hist, a_prev, f, xi, xi_n, g, z):
+    a = pi(o_hist, g, z)
     S1 = wm.step(S, a, a_prev, xi_n)
     f1 = f + 1
     o1 = mdp.add_noise(mdp.obs(S1, a, xi, f1))
     o_hist = torch.cat((o_hist[:, 1:], o1.unsqueeze(1)), 1)
-    return S1, a, o_hist, f1, motion.goal(f1, K)
+    return S1, a, o_hist, f1
+
+
+def _imag_goals(f):
+    """Goals of the reference frames f .. f + H (they do not depend on the imagined states) and the policy's motion
+    latents of the first H, each as one batched pass."""
+    fs = (f.unsqueeze(0) + torch.arange(HZ + 1, device=f.device).unsqueeze(1)).flatten()
+    G = motion.goal(fs, K).view(HZ + 1, f.shape[0], -1)
+    return G, pi.encode(G[:HZ].flatten(0, 1)).view(HZ, f.shape[0], -1)
 
 
 def _reward_term(S, f, a, a_prev):
@@ -507,14 +515,14 @@ def policy_update():
     set_requires_grad(wm, False)
     set_requires_grad(critic, False)
     B = args.pi_batch
-    g0 = motion.goal(f, K)
-    g = g0
+    G_all, Z_all = _imag_goals(f)
+    g0, g = G_all[0], G_all[HZ]
     S0 = S
-    Ss, As, Aps, Fs, Gs = [], [], [], [], []
+    Ss, As, Aps, Fs = [], [], [], []
     for t in range(HZ):
         Aps.append(a_prev)
-        S, a_prev, o_hist, f, g = imag_step(S, o_hist, a_prev, f, xi, xi_n, g)
-        Ss.append(S), As.append(a_prev), Fs.append(f), Gs.append(g)
+        S, a_prev, o_hist, f = imag_step(S, o_hist, a_prev, f, xi, xi_n, G_all[t], Z_all[t])
+        Ss.append(S), As.append(a_prev), Fs.append(f)
     flat = lambda xs: torch.stack(xs).flatten(0, 1)  # noqa: E731  (H*B, ...)
     S_all = tuple(flat([St[i] for St in Ss]) for i in range(6))
     f_all = flat(Fs)
@@ -560,7 +568,7 @@ def policy_update():
     with torch.no_grad():
         S_c = tuple(torch.cat((S0[i].unsqueeze(0), torch.stack([St[i].detach() for St in Ss])), 0).flatten(0, 1) for i in range(6))
         f_c = torch.cat((s["f"].unsqueeze(0), torch.stack(Fs)), 0).flatten()
-        g_c = torch.cat((g0.unsqueeze(0), torch.stack(Gs)), 0).flatten(0, 1)
+        g_c = G_all.flatten(0, 1)
         xi_c = xi_n.unsqueeze(0).expand(HZ + 1, -1, -1).flatten(0, 1)
         X = critic_input_c(S_c, f_c, xi_c, g_c).view(HZ + 1, B, -1)
     critic.norm.update(X)
