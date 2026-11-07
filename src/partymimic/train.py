@@ -4,6 +4,7 @@ the defaults set to the PartyMimic recipe (README, "Recipe")."""
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import os
@@ -24,6 +25,9 @@ parser.add_argument("--ckpt_every", type=int, default=2000)
 parser.add_argument("--ckpt_minutes", type=float, default=0.0, help="also checkpoint every n minutes of training wall-clock")
 parser.add_argument("--max_hours", type=float, default=None, help="stop after this much training wall-clock")
 parser.add_argument("--log_every", type=int, default=50)
+parser.add_argument("--pipeline", action="store_true",
+                    help="two GPUs: collection and the world model on cuda:0, the policy and critic update on cuda:1, "
+                         "side by side; the policy update reads the replay buffer and world model of the previous iteration")
 # ---- simulator, replay, imagination ----
 parser.add_argument("--num_envs", type=int, default=4096)
 parser.add_argument("--buffer_steps", type=int, default=1000)
@@ -125,6 +129,7 @@ torch.backends.cudnn.allow_tf32 = True
 torch.manual_seed(args.seed)
 networks.AMP_DTYPE = torch.bfloat16 if args.amp == "bf16" else None
 dev = "cuda:0"
+ldev = "cuda:1" if args.pipeline else dev  # the policy learner's GPU
 os.makedirs(args.log_dir, exist_ok=True)
 json.dump(vars(args), open(os.path.join(args.log_dir, "args.json"), "w"), indent=2)
 
@@ -153,31 +158,32 @@ wm = WorldModel(J, layout.dim, use_prev_action=robot.has_action_delay, hidden=wi
                 structured=args.wm_structured, dt=CONTROL_DT).to(dev)  # fmt: skip
 pi = Policy(mdp.obs_dim, GOAL_DIM, J, hist=Hh, enc_hidden=widths(args.enc_hidden), dec_hidden=widths(args.dec_hidden),
             **policy_kwargs(vars(args), robot)).to(dev)
-critic = Critic(CRITIC_IN).to(dev)
+pi_l = copy.deepcopy(pi).to(ldev) if args.pipeline else pi  # --pipeline: the trained policy; pi acts with its copy
+critic = Critic(CRITIC_IN).to(ldev)
 assert not args.lr_decay_by or args.lr_decay_ret > 0, "--lr_decay_by needs --lr_decay_ret"
 # the learning rate is a device tensor (filled every iteration) and Adam keeps its step on the GPU, so the captured
 # optimizer steps follow the schedule
-adam_kw = lambda: {"fused": True, "capturable": True, "lr": torch.tensor(args.lr, device=dev)}  # noqa: E731
+adam_kw = lambda d: {"fused": True, "capturable": True, "lr": torch.tensor(args.lr, device=d)}  # noqa: E731
 from partymimic.optim import FlatAdam, MuonAdam
 
 if args.wm_opt == "muon":
     opt_wm = MuonAdam(wm, [wm.net], lr=args.lr, betas=(0.9, 0.999), fused=True, capturable=True, flat_adam=True)
 else:
-    opt_wm = torch.optim.Adam(wm.parameters(), **adam_kw())
+    opt_wm = torch.optim.Adam(wm.parameters(), **adam_kw(dev))
 if args.pi_opt == "muon":
-    opt_pi = MuonAdam(pi, [pi.enc, pi.dec], lr=args.lr, betas=(args.pi_beta1, 0.95), fused=True, capturable=True,
+    opt_pi = MuonAdam(pi_l, [pi_l.enc, pi_l.dec], lr=args.lr, betas=(args.pi_beta1, 0.95), fused=True, capturable=True,
                       io=args.pi_muon_io)
 else:
-    opt_pi = torch.optim.Adam(pi.parameters(), betas=(args.pi_beta1, 0.95), **adam_kw())
-NONFINITE = torch.zeros((), dtype=torch.long, device=dev)  # skipped non-finite policy updates
-pi_avg = torch.optim.swa_utils.AveragedModel(pi, multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(args.pi_ema),
+    opt_pi = torch.optim.Adam(pi_l.parameters(), betas=(args.pi_beta1, 0.95), **adam_kw(ldev))
+NONFINITE = torch.zeros((), dtype=torch.long, device=ldev)  # skipped non-finite policy updates
+pi_avg = torch.optim.swa_utils.AveragedModel(pi_l, multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(args.pi_ema),
                                              use_buffers=True) if args.pi_ema > 0 else None  # fmt: skip
 opt_v = FlatAdam(critic.parameters(), args.lr)
 
 GC_ON = args.v_gcons > 0
-SIL_DIAG = torch.zeros(2, device=dev)  # --sil: share of starts with G > V, self-imitation loss
-GC_DIAG = torch.zeros(2, device=dev)  # --v_gcons: relative squared error of grad_s V, cosine to the target
-ALPHA = torch.tensor(robot.action_scale_list(), device=dev)  # action units -> joint-setpoint radians
+SIL_DIAG = torch.zeros(2, device=ldev)  # --sil: share of starts with G > V, self-imitation loss
+GC_DIAG = torch.zeros(2, device=ldev)  # --v_gcons: relative squared error of grad_s V, cosine to the target
+ALPHA = torch.tensor(robot.action_scale_list(), device=ldev)  # action units -> joint-setpoint radians
 
 start_it, wall_offset, sim_steps = 0, 0.0, 0
 
@@ -202,6 +208,7 @@ if args.resume:
     assert "opt_pi" in ck, f"--resume {args.resume}: no optimizer state (use last.pt)"
     check_pruned(ck.get("args", {}), what=args.resume)
     wm.load_state_dict(ck["wm"]), pi.load_state_dict(ck.get("pi_live", ck["pi"])), critic.load_state_dict(ck["critic"])
+    pi_l.load_state_dict(ck.get("pi_live", ck["pi"]))
     load_opt_states(ck)
     start_it, wall_offset, sim_steps = ck["iteration"], ck["wall_time"], ck["sim_steps"]
     if pi_avg is not None:
@@ -406,7 +413,8 @@ class Graphed:
             torch.cuda.empty_cache()  # return the eager phase's cached blocks before the graph takes its own pool
             t0 = time.time()
             self.graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(self.graph):
+            # a capture stream of the current device (torch.cuda.graph's default one is made once, on the first device)
+            with torch.cuda.graph(self.graph, stream=torch.cuda.Stream()):
                 self.out = self.fn()
             torch.cuda.synchronize()
             print(f"cuda_graph: captured {self.fn.__name__} in {time.time() - t0:.1f} s, "
@@ -504,7 +512,10 @@ def gcons_loss(S, f, xi_n, g, T, m, scale):
     return (u * Je).sum(), err.detach(), cos
 
 
-def policy_update():
+CS = {}  # the policy step's imagined windows for the critic fit
+
+
+def policy_step():
     s, h = sample_valid_starts(args.pi_batch)
     S = unflatten_state(s["s"])
     xi, f, a_prev = s["xi"], s["f"], s["a_prev"]
@@ -563,11 +574,19 @@ def policy_update():
             pi_avg.update_parameters(pi)
     set_requires_grad(wm, True)
     set_requires_grad(critic, True)
-    # ---------------- critic: GAE(lambda) targets over the imagined transitions ----------------
+    CS.update(S0=S0, Ss=[tuple(x.detach() for x in St) for St in Ss], f0=s["f"], Fs=Fs, G_all=G_all, xi_n=xi_n,
+              rews=rews, dones=dones, gc=(gc_T, gc_m) if GC_ON else None)  # fmt: skip
+    return loss.detach(), (r_sum / HZ / 0.1).mean(), gn.detach(), c.mean().detach()
+
+
+def critic_fit():
+    """GAE(lambda) targets over the imagined transitions of the last policy step; minibatch fit of the critic."""
+    S0, Ss, Fs, G_all, xi_n, rews, dones = (CS[k] for k in ("S0", "Ss", "Fs", "G_all", "xi_n", "rews", "dones"))
+    B = S0[0].shape[0]
     v_loss = torch.zeros(())
     with torch.no_grad():
-        S_c = tuple(torch.cat((S0[i].unsqueeze(0), torch.stack([St[i].detach() for St in Ss])), 0).flatten(0, 1) for i in range(6))
-        f_c = torch.cat((s["f"].unsqueeze(0), torch.stack(Fs)), 0).flatten()
+        S_c = tuple(torch.cat((S0[i].unsqueeze(0), torch.stack([St[i] for St in Ss])), 0).flatten(0, 1) for i in range(6))
+        f_c = torch.cat((CS["f0"].unsqueeze(0), torch.stack(Fs)), 0).flatten()
         g_c = G_all.flatten(0, 1)
         xi_c = xi_n.unsqueeze(0).expand(HZ + 1, -1, -1).flatten(0, 1)
         X = critic_input_c(S_c, f_c, xi_c, g_c).view(HZ + 1, B, -1)
@@ -578,6 +597,7 @@ def policy_update():
     n = Xf.shape[0]
     mb = n // args.critic_minibatches
     if GC_ON:
+        gc_T, gc_m = CS["gc"]
         gc_scale = _gc_scale(S_c, B)
         gc_S = tuple(x[B : HZ * B] for x in S_c)  # S_1 .. S_{H-1}
         gc_f, gc_xi, gc_g = f_c[B : HZ * B], xi_c[B : HZ * B], g_c[B : HZ * B]
@@ -597,7 +617,13 @@ def policy_update():
             v_tot.backward()
             nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
             opt_v.step()
-    return loss.detach(), v_loss.detach(), (r_sum / HZ / 0.1).mean(), gn.detach(), c.mean().detach()
+    return (v_loss.detach(),)
+
+
+def policy_update():
+    pl, ir, gn, surv = policy_step()
+    (vl,) = critic_fit()
+    return pl, vl, ir, gn, surv
 
 
 # ------------------------------------------------------------------------------------------------
@@ -722,12 +748,202 @@ def collect(n_steps: int, stats: dict):
 assert not env.push_enabled, "the collection graph: no pushes"
 # the replay buffer keeps its fill level on the device, so the captured sampling follows it: capture at once
 buffer.use_device_ptr(device_size=True)
+
+
+def _to_device(obj, d: str):
+    """A shallow copy of obj with its tensor attributes (and lists / tuples of tensors) on device d."""
+    out = copy.copy(obj)
+    for k, v in vars(obj).items():
+        if torch.is_tensor(v):
+            setattr(out, k, v.to(d))
+        elif isinstance(v, (list, tuple)) and v and all(torch.is_tensor(x) for x in v):
+            setattr(out, k, type(v)(x.to(d) for x in v))
+    return out
+
+
+def wire_dtypes(m: nn.Module, tensors: list) -> list:
+    """--pipeline: the dtype each tensor crosses between the GPUs in: bf16 for the Linear weights and biases when the MLPs
+    run under bf16 autocast (they only enter its bf16 matmuls, so the receiver computes the same), else their own."""
+    lin = {id(p) for mod in m.modules() if isinstance(mod, nn.Linear) for p in mod.parameters(recurse=False)}
+    bf16 = networks.AMP_DTYPE == torch.bfloat16
+    return [torch.bfloat16 if bf16 and id(t) in lin else t.dtype for t in tensors]
+
+
+_pad8 = lambda n: -n % 8  # noqa: E731  (every part starts 8-byte aligned, so it can be viewed as its dtype)
+
+
+def pack(tensors: list, wire: list) -> torch.Tensor:
+    parts = []
+    for t, w in zip(tensors, wire):
+        b = t.detach().to(w).reshape(-1).view(torch.uint8)
+        parts += [b, b.new_zeros(_pad8(b.numel()))]
+    return torch.cat(parts)
+
+
+@torch.no_grad()
+def unpack(b: torch.Tensor, tensors: list, wire: list):
+    """Copy the bytes b (from pack) into tensors."""
+    o = 0
+    for t, w in zip(tensors, wire):
+        n = t.numel() * w.itemsize
+        t.copy_(b[o : o + n].view(w).view(t.shape))
+        o += n + _pad8(n)
+
+
+class Link:
+    """--pipeline: a message from one GPU to the other through pinned host memory, on side streams of both GPUs, so the
+    transfer overlaps both GPUs' work (no peer access between the GPUs; the PCIe link of one can be narrow)."""
+
+    def __init__(self, src: str, dst: str):
+        self.src, self.dst = src, dst
+        self.s_src, self.s_dst = torch.cuda.Stream(src), torch.cuda.Stream(dst)
+        self.host = self.buf = None
+        self.arrived, self.consumed = torch.cuda.Event(), torch.cuda.Event()
+        self.pending = None  # the size and metadata of a message sent and not yet received
+
+    def send(self, b: torch.Tensor, meta=None):
+        """b: uint8 on the source GPU, written by its current stream."""
+        n = b.numel()
+        if self.host is None or self.host.numel() < n:
+            torch.cuda.synchronize(self.src), torch.cuda.synchronize(self.dst)
+            self.host = torch.empty(n, dtype=torch.uint8, pin_memory=True)
+            self.buf = torch.empty(n, dtype=torch.uint8, device=self.dst)
+        self.s_src.wait_stream(torch.cuda.current_stream(self.src))
+        self.s_src.wait_event(self.arrived)  # the host buffer is free once the last message left it
+        b.record_stream(self.s_src)
+        with torch.cuda.stream(self.s_src):
+            self.host[:n].copy_(b, non_blocking=True)
+        self.s_dst.wait_stream(self.s_src)
+        self.s_dst.wait_event(self.consumed)  # the destination buffer is free once the last message was read
+        with torch.cuda.stream(self.s_dst):
+            self.buf[:n].copy_(self.host[:n], non_blocking=True)
+            self.arrived.record()
+        self.pending = (n, meta)
+
+    def recv(self, read):
+        """read(bytes, meta) on the destination GPU's current stream, after the last message arrived; False if none."""
+        if self.pending is None:
+            return False
+        n, meta = self.pending
+        self.pending = None
+        torch.cuda.current_stream(self.dst).wait_event(self.arrived)
+        read(self.buf[:n], meta)
+        self.consumed.record(torch.cuda.current_stream(self.dst))
+        return True
+
+
+LEARNER_FNS = ("sample_valid_starts", "real_returns", "_imag_step", "_imag_goals", "_reward_term", "_critic_input",
+               "_critic_loss", "_gae_targets", "value_grad_targets", "gcons_loss", "gated_step", "ema_update",
+               "policy_step", "critic_fit")  # fmt: skip
+
+
+def learner_namespace():
+    """--pipeline: the policy update's functions rebound to globals that name the learner GPU's copies of the world
+    model, replay buffer, motion library and MDP (and the trained policy pi_l as pi); the collection and the world-model
+    update keep this module's objects on cuda:0."""
+    import types
+
+    kin_l = Kinematics(robot, ldev)
+    motion_l = _to_device(motion, ldev)
+    motion_l.__dict__.pop("goal", None)  # the compiled method of the actor's copy
+    motion_l.device = ldev
+    motion_l.goal = torch.compile(motion_l.goal)
+    mdp_l = _to_device(mdp, ldev)
+    for k in ("reward", "termination", "obs"):
+        mdp_l.__dict__.pop(k, None)
+    mdp_l.kin, mdp_l.motion = kin_l, motion_l
+    buffer_l = ReplayBuffer(args.buffer_steps, args.num_envs, ldev, J, layout.dim)
+    buffer_l.use_device_ptr(device_size=True)
+    L = dict(globals())
+    L.update(pi=pi_l, wm=copy.deepcopy(wm).to(ldev), buffer=buffer_l, motion=motion_l, mdp=mdp_l, kin=kin_l,
+             normalize_xi=_to_device(layout, ldev).normalize, dev=ldev)  # fmt: skip
+    for name in LEARNER_FNS:
+        f = globals()[name]
+        inner = getattr(f, "__wrapped__", None)  # @torch.no_grad()
+        g = inner or f
+        g = types.FunctionType(g.__code__, L, name, g.__defaults__, g.__closure__)
+        L[name] = torch.no_grad()(g) if inner is not None else g
+    for name in ("imag_step", "reward_term", "critic_input_c", "gae_targets_c", "critic_loss_c"):
+        L[name] = torch.compile(L[{"critic_input_c": "_critic_input", "gae_targets_c": "_gae_targets",
+                                   "critic_loss_c": "_critic_loss"}.get(name, "_" + name)])  # fmt: skip
+    return L
+
+
+class Pipe:
+    """--pipeline: in iteration k the actor (cuda:0) collects with the policy of update k - 1 and fits the world model,
+    while the learner (cuda:1) updates the policy on the transitions and world model of iteration k - 1. Messages: the
+    actor's new transitions, world model and observation / goal statistics to the learner; the policy to the actor, sent
+    between the policy step and the critic fit."""
+
+    def __init__(self, L: dict):
+        self.buf_l, wm_l = L["buffer"], L["wm"]
+        a_t = list(wm.parameters()) + list(wm.buffers()) + list(pi.buffers())
+        self.a_src, self.a_dst = a_t, list(wm_l.parameters()) + list(wm_l.buffers()) + list(pi_l.buffers())
+        self.a_wire = wire_dtypes(wm, list(wm.parameters())) + [t.dtype for t in a_t[len(list(wm.parameters())):]]
+        self.p_src, self.p_dst = list(pi_l.parameters()), list(pi.parameters())
+        self.p_wire = wire_dtypes(pi_l, self.p_src)
+        self.to_l, self.to_a = Link(dev, ldev), Link(ldev, dev)
+
+    def _actor_msg(self, n: int) -> torch.Tensor:
+        """The n rows the actor wrote last, its world model and statistics, as bytes on cuda:0."""
+        rows = (torch.arange(n, device=dev) + (buffer.ptr - n)) % buffer.T
+        parts = []
+        for x in buffer.data.values():
+            b = x.index_select(0, rows).reshape(-1).view(torch.uint8)
+            parts += [b, b.new_zeros(_pad8(b.numel()))]
+        return torch.cat(parts + [pack(self.a_src, self.a_wire)])
+
+    def _read_actor(self, b: torch.Tensor, meta):
+        n, ptr, size = meta
+        bl = self.buf_l
+        rows = (torch.arange(n, device=ldev) + (ptr - n)) % bl.T
+        o = 0
+        for x in bl.data.values():
+            k = n * x[0].numel() * x.element_size()
+            x.index_copy_(0, rows, b[o : o + k].view(x.dtype).view(n, *x.shape[1:]))
+            o += k + _pad8(k)
+        unpack(b[o:], self.a_dst, self.a_wire)
+        bl.ptr_t.fill_(ptr), bl.size_t.fill_(size)
+        bl.ptr, bl.size = ptr, size
+
+    def send_actor(self, n: int):
+        n = min(n, buffer.T)
+        self.to_l.send(self._actor_msg(n), (n, buffer.ptr, buffer.size))
+
+    def recv_actor(self):
+        with torch.cuda.device(ldev):
+            self.to_l.recv(self._read_actor)
+
+    def sync_actor(self, n: int):
+        """The same message, copied at once (the warmup's transitions do not fit the links' buffers)."""
+        n = min(n, buffer.T)
+        self._read_actor(self._actor_msg(n).to(ldev), (n, buffer.ptr, buffer.size))
+        torch.cuda.synchronize(ldev)
+
+    def send_pi(self):
+        with torch.cuda.device(ldev):
+            self.to_a.send(pack(self.p_src, self.p_wire))
+
+    def recv_pi(self):
+        self.to_a.recv(lambda b, _: unpack(b, self.p_dst, self.p_wire))
+
+
 wm_update_g = Graphed(wm_update, lambda: True)
-policy_update_g = Graphed(policy_update, lambda: int(pi_avg.n_averaged if pi_avg is not None else 1) > 0)
+_ready = lambda: int(pi_avg.n_averaged if pi_avg is not None else 1) > 0  # noqa: E731
+if args.pipeline:
+    PL = learner_namespace()
+    PIPE = Pipe(PL)
+    policy_step_g = Graphed(PL["policy_step"], _ready)
+    # the critic fit reads the policy step's tensors: static once that step is a graph
+    critic_fit_g = Graphed(PL["critic_fit"], lambda: policy_step_g.graph is not None)
+else:
+    policy_update_g = Graphed(policy_update, _ready)
 
 
 stats = {"r": [], "ep_len": [], "ep_ret": [], "term": [], "done": []}
 collect(args.warmup_steps, stats)  # the replay buffer is not checkpointed, so a resumed run refills it too
+if args.pipeline:
+    PIPE.sync_actor(args.warmup_steps)
 log_path = os.path.join(args.log_dir, "train_log.csv")
 log_f = open(log_path, "a")
 if start_it == 0:
@@ -782,6 +998,8 @@ for it in range(start_it, args.iterations):
     if PROFILE:
         torch.cuda.synchronize()
         _t = time.perf_counter()
+    if args.pipeline:
+        PIPE.recv_pi()
     collect(n, stats)
     if PROFILE:
         torch.cuda.synchronize()
@@ -800,10 +1018,21 @@ for it in range(start_it, args.iterations):
         open(os.path.join(args.log_dir, "policy_start.txt"), "w").write(f"{POLICY_START}\n")
     if POLICY_START is not None and it >= POLICY_START:
         n_avg0 = int(pi_avg.n_averaged) if pi_avg is not None else 0
-        pl, vl, ir, gn, surv = policy_update_g()
+        with torch.cuda.device(ldev):
+            if args.pipeline:
+                PIPE.recv_actor()
+                pl, ir, gn, surv = policy_step_g()
+                PIPE.send_pi()
+                (vl,) = critic_fit_g()
+            else:
+                pl, vl, ir, gn, surv = policy_update_g()
         if pi_avg is not None and int(pi_avg.n_averaged) == n_avg0:
             pi_avg.n_averaged += 1  # ema_update (and a graph replay) does not advance the host-side counter
         agg["pi"].append(pl), agg["v"].append(vl), agg["ir"].append(ir), agg["gn"].append(gn), agg["surv"].append(surv)
+    elif args.pipeline:
+        PIPE.recv_actor()
+    if args.pipeline:
+        PIPE.send_actor(n)
     if PROFILE:
         torch.cuda.synchronize()
         PROF_T["pi"] += time.perf_counter() - _t
@@ -843,7 +1072,7 @@ for it in range(start_it, args.iterations):
         next_ckpt_s += args.ckpt_minutes * 60
     final_ck = it + 1 == args.iterations or out_of_time
     if not final_ck and ((it + 1) % args.ckpt_every == 0 or timed):
-        sd = pi_avg.module.state_dict() if pi_avg is not None else pi.state_dict()
+        sd = pi_avg.module.state_dict() if pi_avg is not None else pi_l.state_dict()
         small = {"pi": {k: v.detach().to("cpu", copy=True) for k, v in sd.items()}, "iteration": it + 1,
                  "wall_time": time.time() - t_start, "sim_steps": sim_steps, "args": vars(args),
                  "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")}  # fmt: skip
@@ -851,7 +1080,7 @@ for it in range(start_it, args.iterations):
         ckpt_wait()
         CKPT_PENDING.append(CKPT_POOL.submit(_save_atomic, small, path))
     elif (it + 1) % args.ckpt_every == 0 or it + 1 == args.iterations or timed or out_of_time:
-        ck = {"wm": wm.state_dict(), "pi": pi_avg.module.state_dict() if pi_avg is not None else pi.state_dict(), "pi_live": pi.state_dict(), "critic": critic.state_dict(), "opt_wm": opt_wm.state_dict(),
+        ck = {"wm": wm.state_dict(), "pi": pi_avg.module.state_dict() if pi_avg is not None else pi_l.state_dict(), "pi_live": pi_l.state_dict(), "critic": critic.state_dict(), "opt_wm": opt_wm.state_dict(),
               "opt_pi": opt_pi.state_dict(), "opt_v": opt_v.state_dict(), "iteration": it + 1,
               "wall_time": time.time() - t_start, "sim_steps": sim_steps, "args": vars(args),
               "pi_avg": pi_avg.state_dict() if pi_avg is not None else None,

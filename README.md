@@ -31,7 +31,8 @@ Loc and Man.
 |---|---:|---:|---:|---:|---:|---:|
 | SuperMimic | 149 min | 35.0 | 39.9 | 30.2 | 56.4 | 158.4 |
 | BlinkMimic | 68 min | 30.7 | 32.2 | 29.1 | 51.7 | 126.0 |
-<!--RP1_README-->
+| **PartyMimic** (2k iterations) | **8.0 min** | 21.2 | 24.6 | 17.8 | 39.9 | 115.7 |
+| **PartyMimic** (12k iterations) | **31 min** | **20.0** | **23.6** | **16.5** | **35.9** | **103.6** |
 
 <sub>SuperMimic (paper hyperparameters), NablaMimic (official config), BlinkMimic (main preset) and PartyMimic were
 all trained by us. Each run had one RTX 4090 to itself, and all used the same 9,173 clips (BONES-SEED + LAFAN1,

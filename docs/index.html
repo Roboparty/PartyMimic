@@ -71,7 +71,7 @@
   <div class="card"><b>6.7 min</b><span>for G1 to beat every compared method on Loc/Man error (26.2 mm vs 26.7 mm for Mimic Lite v1.1, which used 50 GPU-h)</span></div>
   <div class="card"><b>21 min</b><span>for G1 to reach best-in-comparison Loc/Man, Ground and Dance errors at once, with &ge; 90% completion on every split</span></div>
   <div class="card"><b>23.6 mm</b><span>G1 Loc/Man error after 30 min; SONIC's is 37.1 mm after 21,000 GPU-h</span></div>
-  <div class="card"><b>RP1_CARD_MM</b><span>RP1 Loc/Man error after RP1_CARD_MIN min with the same recipe, no tuning (BlinkMimic: 30.7 mm after 68 min)</span></div>
+  <div class="card"><b>20.0 mm</b><span>RP1 Loc/Man error after 31 min with the same recipe, no tuning (BlinkMimic: 30.7 mm after 68 min)</span></div>
 </div>
 
 <h2 id="results">Results</h2>
@@ -92,7 +92,9 @@
   <tr class="robot"><td colspan="7">RoboParty RP1 &middot; body position error (mm, lower is better)</td></tr>
   <tr><td>SuperMimic (paper hyperparameters)</td><td class="n">149 min</td><td class="n">35.0</td><td class="n">39.9</td><td class="n">30.2</td><td class="n">56.4</td><td class="n">158.4</td></tr>
   <tr><td>BlinkMimic (main preset)</td><td class="n">68 min</td><td class="n">30.7</td><td class="n">32.2</td><td class="n">29.1</td><td class="n">51.7</td><td class="n">126.0</td></tr>
-<!--RP1_ROWS-->
+  <tr class="ours"><td>PartyMimic, 2,000 iterations</td><td class="n">8.0 min</td><td class="n">21.2</td><td class="n">24.6</td><td class="n">17.8</td><td class="n">39.9</td><td class="n">115.7</td></tr>
+  <tr class="ours"><td>PartyMimic, 8,000 iterations</td><td class="n">22 min</td><td class="n">20.1</td><td class="n">23.5</td><td class="n">16.8</td><td class="n">36.5</td><td class="n">101.8</td></tr>
+  <tr class="ours"><td>PartyMimic, 12,000 iterations</td><td class="n">31 min</td><td class="n">20.0</td><td class="n">23.6</td><td class="n">16.5</td><td class="n">35.9</td><td class="n">103.6</td></tr>
 </table></div>
 <p class="note"><b>How these numbers were obtained.</b>
   Every trained method (SuperMimic, NablaMimic, BlinkMimic, PartyMimic) was trained by us on the same machine. Each
@@ -121,7 +123,7 @@
   <tr><td>SuperMimic</td><td class="n">100 / 100</td><td class="n">98.0</td><td class="n">80.0</td><td class="n">99.4 / 100</td><td class="n">98.1</td><td class="n">80.5</td></tr>
   <tr><td>NablaMimic</td><td class="n">99.3 / 100</td><td class="n">87.4</td><td class="n">82.3</td><td class="n">&ndash;</td><td class="n">&ndash;</td><td class="n">&ndash;</td></tr>
   <tr><td>BlinkMimic</td><td class="n">100 / 100</td><td class="n">96.7</td><td class="n">88.0</td><td class="n">100 / 100</td><td class="n">93.8</td><td class="n">87.8</td></tr>
-  <tr class="ours"><td>PartyMimic, 12,000 iterations</td><td class="n">99.8 / 98.7</td><td class="n">95.9</td><td class="n">93.4</td><!--RP1_PROG--></tr>
+  <tr class="ours"><td>PartyMimic, 12,000 iterations</td><td class="n">99.8 / 98.7</td><td class="n">95.9</td><td class="n">93.4</td><td class="n">100 / 98.9</td><td class="n">94.2</td><td class="n">90.0</td></tr>
 </table></div>
 
 <figure>
