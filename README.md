@@ -43,6 +43,21 @@ Test motions come from a different mocap source; no 1-s window lies within 0.059
 SONIC and Mimic Lite are official leaderboard entries with different data and hardware. Full protocol and
 completion rates are on the [project page](docs/index.html#results).</sub>
 
+**High-dynamic motions, zero-shot** (64 clips none of the methods trained on; % completed / body position error,
+PartyMimic 2-seed mean, other methods at the checkpoints in the tables above):
+
+| G1 | Jumps | Martial arts | Twists & kip-ups | Flips |
+|---|---:|---:|---:|---:|
+| Other methods (range) | 76–100% / 41.9–58.8 mm | 73–87% / 49.7–77.9 mm | 7–36% | 0–11% |
+| **PartyMimic** | 94% / **34.0 mm** | 87% / **39.7 mm** | 32% | 6% |
+
+Where the motion can be tracked (jumps, martial arts), PartyMimic is the most accurate on both robots; RP1 has the
+same pattern (41.5 / 27.7 mm against 49.3 mm or more). Flips fail for every method, SONIC included. The robot
+starts to turn without taking off: its pelvis rises 0.08–0.10 m, against a median of 0.35–0.37 m in the reference.
+Only 7 of the 9,173 training clips are flips or cartwheels. With 105 extra flip, twist-jump and kip-up clips in
+training, the same recipe completes 56% of the flips instead of 6%, without losing held-out Loc/Man accuracy (23.0 mm). Clips, videos and the
+diagnosis are on the [page](docs/index.html#highdyn).
+
 What matters most in the recipe, measured by the effect of removing each factor on G1 Loc/Man:
 
 | Factor | Effect when removed |
@@ -125,6 +140,7 @@ previous best at 2,000 iterations. At 8,000 iterations Loc/Man, Dance and Ground
 SIM2REAL=<checkout of github.com/EGalahad/sim2real> bash scripts/eval.sh logs/g1_s0/ckpt_012000.pt eval/g1_s0 g1
 # side-by-side videos of the median clip per split: robot solid, reference ghost, both at global poses
 MUJOCO_GL=egl python tools/sim2sim_video.py eval/g1_s0 g1 <robot MJCF> videos --sim2real <sim2real checkout>
+# other splits / a chosen clip: --splits <split>:<title>[:<clip stem>] ... --note zero-shot
 ```
 
 Also included: `tools/export_deploy_onnx.py`, which writes the ONNX and deploy YAML for the sim2real controller

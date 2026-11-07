@@ -55,7 +55,7 @@
   <p class="tagline">One whole-body tracking policy for a 9,173-clip motion library, trained in <b>7&ndash;30 minutes on a
     single RTX 4090</b>. It reaches the best held-out tracking error of any method we compared, on two humanoids.</p>
   <div class="links"><a href="https://github.com/Roboparty/PartyMimic">Code</a><a href="#results">Results</a><a href="#videos">Videos</a>
-    <a href="#speed">Speed</a><a href="#recipe">Recipe</a><a href="#supermimic">SuperMimic ablation</a></div>
+    <a href="#highdyn">High-dynamic</a><a href="#speed">Speed</a><a href="#recipe">Recipe</a><a href="#supermimic">SuperMimic ablation</a></div>
 </header>
 <main>
 
@@ -225,6 +225,81 @@
   <div><video src="static/videos/rp1_dance.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Dance</div>
   <div><video src="static/videos/rp1_ground.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Ground</div>
 </div>
+
+<h2 id="highdyn">High-dynamic motions, zero-shot</h2>
+<p>The same policies, unchanged, on 64 high-dynamic clips that no method trained on. We evaluated every compared
+  method's reported checkpoint with the same evaluator and failure rule as above. The clips are flat-ground motions in
+  four groups:</p>
+<ul class="tight">
+  <li><b>Jumps</b> (17 clips): standing high and long jumps, triple jumps and rope skipping, all from MotionDecode.</li>
+  <li><b>Martial arts</b> (15 clips): one clip per form, from MotionDecode.</li>
+  <li><b>Twists &amp; kip-ups</b> (14 clips): 360&deg; twist jumps, butterfly twists and kip-ups from MotionDecode, plus a
+    tornado kick from our own mocap.</li>
+  <li><b>Flips</b> (18 clips): front, back, side and no-hand somersaults from MotionDecode, plus four flips from our own
+    mocap.</li>
+</ul>
+<p>None of the MotionDecode clips are among the 228 test clips. We also dropped every clip whose MotionDecode G1 retarget
+  jumps between frames before its last 0.25 s (a root teleport or a joint snap). Our mocap was retargeted to G1 with
+  human-humanoid-tools. RP1 tracks the same motions, retargeted from G1 to RP1. The videos show seed 0, with the same
+  clip on both robots.</p>
+<div class="vrow">Unitree G1 &middot; zero-shot</div>
+<div class="videos">
+  <div><video src="static/videos/g1_hd_jumps.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Triple jump</div>
+  <div><video src="static/videos/g1_hd_martial.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Martial arts (saber form, no saber)</div>
+  <div><video src="static/videos/g1_hd_twists.mp4" autoplay muted loop playsinline controls preload="metadata"></video>360&deg; twist jump</div>
+  <div><video src="static/videos/g1_hd_flips.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Back somersault: the one flip of 18 that G1 completes</div>
+</div>
+<div class="vrow">RoboParty RP1 &middot; zero-shot</div>
+<div class="videos">
+  <div><video src="static/videos/rp1_hd_jumps.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Triple jump</div>
+  <div><video src="static/videos/rp1_hd_martial.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Martial arts (saber form, no saber)</div>
+  <div><video src="static/videos/rp1_hd_twists.mp4" autoplay muted loop playsinline controls preload="metadata"></video>360&deg; twist jump</div>
+  <div><video src="static/videos/rp1_hd_flips.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Back somersault: falls at take-off</div>
+</div>
+<div class="scroll"><table>
+  <tr><th rowspan="2">Method</th><th class="n" colspan="2">Jumps</th><th class="n" colspan="2">Martial arts</th>
+      <th class="n" colspan="2">Twists &amp; kip-ups</th><th class="n" colspan="2">Flips</th></tr>
+  <tr><th class="n">done %</th><th class="n">mm</th><th class="n">done %</th><th class="n">mm</th><th class="n">done %</th><th class="n">mm</th><th class="n">done %</th><th class="n">mm</th></tr>
+  <tr class="robot"><td colspan="9">Unitree G1 &middot; clips completed (%) and body position error (mm)</td></tr>
+  <tr class="ref"><td>SONIC</td><td class="n">82</td><td class="n">46.4</td><td class="n"><b>87</b></td><td class="n">65.2</td><td class="n">29</td><td class="n">55.8</td><td class="n">0</td><td class="n">45.5</td></tr>
+  <tr class="ref"><td>Mimic Lite v1.1</td><td class="n">82</td><td class="n">42.8</td><td class="n">73</td><td class="n">49.7</td><td class="n">7</td><td class="n">51.3</td><td class="n">0</td><td class="n">41.6</td></tr>
+  <tr><td>SuperMimic</td><td class="n"><b>100</b></td><td class="n">58.8</td><td class="n"><b>87</b></td><td class="n">77.9</td><td class="n">21</td><td class="n">78.0</td><td class="n">0</td><td class="n">53.7</td></tr>
+  <tr><td>NablaMimic</td><td class="n">76</td><td class="n">41.9</td><td class="n"><b>87</b></td><td class="n">59.6</td><td class="n"><b>36</b></td><td class="n">53.1</td><td class="n">0</td><td class="n">44.9</td></tr>
+  <tr><td>BlinkMimic</td><td class="n">94</td><td class="n">45.0</td><td class="n">80</td><td class="n">64.8</td><td class="n"><b>36</b></td><td class="n">62.0</td><td class="n"><b>11</b></td><td class="n">51.2</td></tr>
+  <tr><td>XMimic</td><td class="n">94</td><td class="n">45.1</td><td class="n"><b>87</b></td><td class="n">58.8</td><td class="n"><b>36</b></td><td class="n">59.8</td><td class="n">0</td><td class="n">53.6</td></tr>
+  <tr class="ours"><td>PartyMimic, 12,000 iterations</td><td class="n">94</td><td class="n"><b>34.0</b></td><td class="n"><b>87</b></td><td class="n"><b>39.7</b></td><td class="n">32</td><td class="n">54.7</td><td class="n">6</td><td class="n">45.6</td></tr>
+  <tr class="robot"><td colspan="9">RoboParty RP1 &middot; clips completed (%) and body position error (mm)</td></tr>
+  <tr><td>SuperMimic</td><td class="n"><b>94</b></td><td class="n">57.5</td><td class="n"><b>87</b></td><td class="n">57.4</td><td class="n">21</td><td class="n">79.1</td><td class="n">0</td><td class="n">65.0</td></tr>
+  <tr><td>BlinkMimic</td><td class="n">82</td><td class="n">54.5</td><td class="n"><b>87</b></td><td class="n">50.7</td><td class="n"><b>36</b></td><td class="n">72.1</td><td class="n">6</td><td class="n">59.4</td></tr>
+  <tr><td>XMimic</td><td class="n">82</td><td class="n">59.9</td><td class="n"><b>87</b></td><td class="n">49.3</td><td class="n"><b>36</b></td><td class="n">66.6</td><td class="n"><b>11</b></td><td class="n">63.8</td></tr>
+  <tr class="ours"><td>PartyMimic, 12,000 iterations</td><td class="n">91</td><td class="n"><b>41.5</b></td><td class="n"><b>87</b></td><td class="n"><b>27.7</b></td><td class="n"><b>36</b></td><td class="n">61.6</td><td class="n">0</td><td class="n">59.9</td></tr>
+</table></div>
+<ul class="tight">
+  <li><b>Jumps and martial arts: PartyMimic tracks them best on both robots.</b> On G1 its errors are 34.0 and 39.7 mm,
+    against 41.9&ndash;58.8 and 49.7&ndash;77.9 mm for the other methods. Its completion matches or beats theirs, except
+    that SuperMimic finishes all the jumps, at 58.8 mm. On RP1 the gap is wider: 41.5 and 27.7 mm against
+    54.5&ndash;59.9 and 49.3&ndash;57.4 mm. There SuperMimic again completes more jumps (94% vs 91%, at 57.5 mm).</li>
+  <li><b>Flips fail for every method,</b> SONIC included (21,000 GPU-h): 0&ndash;11% of the flips are completed, and
+    7&ndash;36% of the twists and kip-ups. Only the 360&deg; twist jumps are ever completed. All three butterfly twists,
+    all five kip-ups and the tornado kick fail for all 13 policies.</li>
+  <li><b>Why flips fail: no take-off.</b> In the failed flips the reference pelvis rises 0.35&ndash;0.37 m (median)
+    before it turns over. The robot's pelvis rises 0.08 m (G1) or 0.09&ndash;0.10 m (RP1). The robot starts turning while its feet
+    are still on the ground, so the pelvis-height or gravity-direction check stops the clip. The one back somersault G1
+    completes is the one where it does jump, by 0.25&ndash;0.29 m. Only 7 of the 9,173 training clips are flips or
+    cartwheels.</li>
+  <li><b>Missing data, not missing capacity.</b> We trained the same recipe (G1, seed 0) on the training set plus 105
+    MotionDecode flip, twist-jump and kip-up clips, none of them in this test set. Flips completed rose from 6% to 56%,
+    and twists and kip-ups from 29% to 57%. Jumps went from 94% to 100%. Held-out Loc/Man error did not suffer (23.0 mm vs
+    23.6 mm), nor did Ground (72.3 mm vs 75.6 mm). Flips from another mocap source still mostly fail, though: one of our
+    four flips is completed, and none of the five takes in the leaderboard author's own G1 retarget
+    (<code>any4hdmi-g1-extreme-motions</code>). Generalizing flips across sources needs more varied flip data.</li>
+</ul>
+<p class="note">The error is averaged over the part of each clip that was tracked. For Flips and Twists that is mostly
+  the run-up, so compare completion there. PartyMimic rows are 2-seed means. SONIC is the release G1 checkpoint and
+  Mimic Lite is v1.1, both from the sim2real artifacts. On the leaderboard's Dance-40 they score 48.7 / 43.3 mm here,
+  against 48.7 / 43.1 mm officially. The leaderboard author's two compiled high-dynamic sequences
+  (<code>any4hdmi-g1-high-dynamic-sequences</code>) open with a cartwheel and a flip. Every method falls there, within the first 14%
+  of the clip.</p>
 
 <h2 id="recipe">Recipe and what matters most</h2>
 <p>PartyMimic trains with BPTT: the policy gradient is the derivative of an analytic tracking reward, back-propagated

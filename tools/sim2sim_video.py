@@ -4,7 +4,7 @@ body position error, the robot (opaque) and the reference motion (translucent gh
 one scene, so root drift shows as a gap between the two. The recorded world poses of every body are written straight
 into the geom poses (no joint angles needed). Run with the Python environment of sim2real:
     MUJOCO_GL=egl python tools/sim2sim_video.py <eval dir> <robot name> <robot MJCF> <out dir> \
-        --sim2real <sim2real checkout> [--seconds 12]
+        --sim2real <sim2real checkout> [--seconds 12] [--splits <split>:<title>[:<clip stem>] ...] [--note zero-shot]
 """
 
 import argparse
@@ -25,10 +25,14 @@ FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 W, H, FPS = 960, 540, 50
 
 
-def median_clip(split_dir: str) -> dict:
+def median_clip(split_dir: str, stem: str | None = None) -> dict:
+    """The clip with the median error of a split, or the clip whose motion file is <stem>.npz."""
     rows = list(csv.DictReader(open(os.path.join(split_dir, "tracking_metrics.csv"))))
     med = st.median(float(r["local_body_tracking_error"]) for r in rows)
-    r = min(rows, key=lambda r: abs(float(r["local_body_tracking_error"]) - med))
+    if stem:
+        r = next(r for r in rows if os.path.basename(r["motion_path"]) == f"{stem}.npz")
+    else:
+        r = min(rows, key=lambda r: abs(float(r["local_body_tracking_error"]) - med))
     return {"path": r["path"], "err": 1000 * float(r["local_body_tracking_error"]), "progress": float(r["progress"]),
             "end": int(r["termination_idx"]) if r["terminated"] == "1" else None}
 
@@ -79,7 +83,8 @@ def label(img: np.ndarray, lines: list, font) -> np.ndarray:
     return np.asarray(im)
 
 
-def render_clip(m, robot: str, split: str, title: str, clip: dict, out: str, seconds: float) -> dict:
+def render_clip(m, robot: str, split: str, title: str, clip: dict, out: str, seconds: float,
+                note: str = "held-out") -> dict:
     tr = dict(np.load(clip["path"]))
     idx = ctm._select_policy_frames(tr)
     names = [str(n) for n in tr["body_names"].tolist()]
@@ -119,7 +124,7 @@ def render_clip(m, robot: str, split: str, title: str, clip: dict, out: str, sec
             scn.geoms[i].rgba[:] = GHOST
         img = ren.render()
         err = 1000 * np.linalg.norm(rp[t] - mp[t], axis=-1).mean()
-        img = label(img, [(f"PartyMimic on {robot.upper()}  |  {title} (held-out)", (20, 20, 20)),
+        img = label(img, [(f"PartyMimic on {robot.upper()}  |  {title} ({note})", (20, 20, 20)),
                           (f"{os.path.basename(str(tr['motion_path'])).replace('.npz', '')}", (60, 60, 60)),
                           ("robot (solid)   reference (blue ghost, global pose)", (40, 90, 170)),
                           (f"t = {t / FPS:5.2f} s   global body position gap {err:4.0f} mm", (60, 60, 60))], font)
@@ -139,6 +144,10 @@ def main() -> None:
     ap.add_argument("out_dir")
     ap.add_argument("--sim2real", default=os.environ.get("SIM2REAL", "sim2real"), help="sim2real checkout")
     ap.add_argument("--seconds", type=float, default=12.0)
+    ap.add_argument("--splits", nargs="+", metavar="SPLIT:TITLE[:CLIP]",
+                    help="splits to render (default: the four MotionDecode splits); CLIP picks a motion by file stem "
+                         "instead of the median one")
+    ap.add_argument("--note", default="held-out", help="shown after the split title")
     a = ap.parse_args()
     global ctm
     sys.path.insert(0, os.path.join(a.sim2real, "scripts", "tracking_experiment"))
@@ -146,9 +155,11 @@ def main() -> None:
 
     os.makedirs(a.out_dir, exist_ok=True)
     m = scene_model(a.xml)
-    for split, title in SPLITS:
-        clip = median_clip(os.path.join(a.lb_dir, split))
-        info = render_clip(m, a.robot, split, title, clip, os.path.join(a.out_dir, f"{a.robot}_{split}.mp4"), a.seconds)
+    specs = [(s.split(":") + [None])[:3] for s in a.splits] if a.splits else [(s, t, None) for s, t in SPLITS]
+    for split, title, stem in specs:
+        clip = median_clip(os.path.join(a.lb_dir, split), stem)
+        info = render_clip(m, a.robot, split, title, clip, os.path.join(a.out_dir, f"{a.robot}_{split}.mp4"),
+                           a.seconds, a.note)
         print(info, flush=True)
 
 
