@@ -55,7 +55,7 @@
   <p class="tagline">One whole-body tracking policy for a 9,173-clip motion library, trained in <b>7&ndash;30 minutes on a
     single RTX 4090</b>. It reaches the best held-out tracking error of any method we compared, on two humanoids.</p>
   <div class="links"><a href="https://github.com/">Code</a><a href="#results">Results</a><a href="#videos">Videos</a>
-    <a href="#recipe">Recipe</a><a href="#supermimic">SuperMimic ablation</a></div>
+    <a href="#speed">Speed</a><a href="#recipe">Recipe</a><a href="#supermimic">SuperMimic ablation</a></div>
 </header>
 <main>
 
@@ -131,6 +131,72 @@
   <figcaption>Error at every scored checkpoint against training minutes on one RTX 4090 (log scale). PartyMimic is the
     2-seed mean. The dashed and dotted lines are the official Mimic Lite v1.1 and SONIC errors.</figcaption>
 </figure>
+
+<h2 id="speed">Speed: like for like with XMimic and BlinkMimic</h2>
+<p><a href="https://github.com/nico-bohlinger/xmimic">XMimic</a> rebuilds BlinkMimic's main recipe in JAX and reports
+  BlinkMimic's LAFAN-40 target in 0.91 min on four H100s. We ran its 1-GPU and 2-GPU (AL) trainers, BlinkMimic main and
+  PartyMimic on our two RTX 4090s, under XMimic's protocol, 3 seeds each. PartyMimic keeps its recipe unchanged; it was
+  not tuned for this benchmark.</p>
+<figure>
+  <img src="static/lafan_speed.png" alt="LAFAN-40 evaluation return against training minutes and time to target">
+</figure>
+<div class="scroll"><table>
+  <tr><th>Method</th><th class="n">GPUs</th><th class="n">it/s</th><th class="n">First return &ge; 0.82</th>
+      <th class="n">Held &times;3, 0 failed</th><th class="n">Held &times;3, with start-up</th><th class="n">Return at 3,500 it</th></tr>
+  <tr><td>BlinkMimic (main)</td><td class="n">1</td><td class="n">7.8</td><td class="n">2.93 min</td><td class="n">3.45 min</td><td class="n">3.62 min</td><td class="n">0.865</td></tr>
+  <tr><td>XMimic, 1 GPU</td><td class="n">1</td><td class="n">9.3</td><td class="n">2.32 min</td><td class="n">3.71 min</td><td class="n">3.96 min</td><td class="n">0.860</td></tr>
+  <tr class="ours"><td>PartyMimic, 1 GPU</td><td class="n">1</td><td class="n">8.2</td><td class="n">2.45 min</td><td class="n">5.17 min</td><td class="n">5.57 min</td><td class="n">0.883</td></tr>
+  <tr><td>XMimic, 2 GPUs (actor | learner)</td><td class="n">2</td><td class="n">13.2</td><td class="n">1.71 min</td><td class="n">2.89 min</td><td class="n">3.17 min</td><td class="n">0.863</td></tr>
+  <tr class="ours"><td>PartyMimic, 2 GPUs (<code>--pipeline</code>)</td><td class="n">2</td><td class="n">12.7</td><td class="n">1.66 min</td><td class="n">3.41 min</td><td class="n">3.82 min</td><td class="n">0.883</td></tr>
+</table></div>
+<ul class="tight">
+  <li><b>Return 0.82.</b> PartyMimic needs the fewest iterations (1,200&ndash;1,300; BlinkMimic 1,300&ndash;1,600; XMimic
+    1,400&ndash;1,500). On two GPUs it gets there as fast as XMimic (1.66 vs 1.71 min, 1.8&times; BlinkMimic). On one GPU XMimic's
+    faster iterations make up for that (2.32 vs 2.45 min).</li>
+  <li><b>Zero failures.</b> PartyMimic is slower to the full target. One or two hard clips (<code>dance1_subject1</code>,
+    <code>jumps1_subject2</code>) keep failing, so zero failures held over three checkpoints comes at 2,100&ndash;3,100 iterations (XMimic 1,900&ndash;2,400, BlinkMimic 1,600&ndash;1,800). BlinkMimic and XMimic run evaluation-guided
+    probe sweeps that search for exactly these failures among the training clips. PartyMimic dropped them because they
+    did not improve held-out tracking (see the <a href="#recipe">recipe</a>).</li>
+  <li><b>Final quality.</b> At the end of the 3,500-iteration budget PartyMimic's return is 0.883; the others reach
+    0.860&ndash;0.865.</li>
+  <li><b>Where PartyMimic's speed comes from.</b> On one GPU, the motion latents of all 32 imagined steps are computed in
+    one batched pass, and every Adam update (the critic's and the Adam half of Muon) runs on one flat buffer. Together these cut the policy update from 86.5 to
+    78.4 ms and raise training from 7.65 to 8.2 it/s. With <code>--pipeline</code>, GPU 0 collects data and fits the world model while GPU 1 updates the
+    policy and the critic on the previous iteration's data and world model, which gives 1.6&times; the 1-GPU throughput.
+    The transfers between the GPUs run through pinned host memory on side streams and overlap the compute. The
+    policy crosses as soon as its step is done, during the critic fit. Linear weights cross as bf16, which is exact
+    because they only enter bf16 autocast matmuls. This matters here: the second 4090's PCIe link runs at x1 (about
+    1.6 GB/s measured), so a 36 MB fp32 policy alone would take over 20 ms to cross.</li>
+</ul>
+<p class="note"><b>Protocol.</b> LAFAN-40: the 40 G1 LAFAN1 clips, both for training and evaluation, with the same files
+  as XMimic (checked against its SHA-256 list). Every run trains 3,500 iterations with a checkpoint every 100. Each
+  checkpoint plays every clip once from its first frame per replica (4 replicas), without randomization or noise. A clip
+  fails when the training termination triggers. BlinkMimic and PartyMimic checkpoints are scored by BlinkMimic's
+  <code>eval_batch.py</code>, XMimic's by its JAX evaluator, which XMimic reports agrees with it to +0.001.
+  Training minutes exclude the first log interval's excess over the steady interval for every method, by XMimic's
+  <code>tools/exclude_compile.py</code> rule. That is compilation and CUDA-graph capture for the PyTorch trainers, and
+  the first-execution overhead left in XMimic's clock, since XMimic compiles before its clock starts. The
+  with-start-up column adds back each method's start-up with warm compilation caches (seeds 1 and 2): 0.17 min for
+  BlinkMimic, 0.26 / 0.28 min for XMimic (its ahead-of-time compilation), 0.41 min for PartyMimic. The very first run on
+  a machine compiles from scratch and takes longer: 3.3 / 2.0 min more for XMimic 1 GPU / AL, 1.9 min for the
+  PartyMimic pipeline. Hardware: two RTX 4090
+  (48 GB), i9-14900K. The two-GPU methods share the x1 link of the second GPU. XMimic AL runs its probe process on the
+  learner GPU under CUDA MPS, as in its README.</p>
+<h3>Two GPUs on the 9,173-clip library</h3>
+<p>The same G1 recipe and data as the <a href="#results">results</a> table, trained with <code>--pipeline</code> on the
+  two 4090s and scored by the leaderboard evaluator (2-seed means, held-out MotionDecode, mm). Twelve thousand iterations take 16 min instead of 30, at
+  the same Loc/Man error.</p>
+<div class="scroll"><table>
+  <tr><th>G1, PartyMimic</th><th class="n">Training</th><th class="n">Loc/Man</th><th class="n">Loc</th><th class="n">Man</th><th class="n">Dance</th><th class="n">Ground</th></tr>
+  <tr><td>1 GPU, 2,000 iterations</td><td class="n">6.7 min</td><td class="n">26.2</td><td class="n">29.3</td><td class="n">23.1</td><td class="n">43.1</td><td class="n">84.2</td></tr>
+  <tr class="ours"><td>2 GPUs, 2,000 iterations</td><td class="n">3.1 min</td><td class="n">25.6</td><td class="n">28.1</td><td class="n">23.0</td><td class="n">43.3</td><td class="n">86.2</td></tr>
+  <tr><td>1 GPU, 8,000 iterations</td><td class="n">21 min</td><td class="n">23.7</td><td class="n">26.1</td><td class="n">21.3</td><td class="n">38.2</td><td class="n">77.5</td></tr>
+  <tr class="ours"><td>2 GPUs, 8,000 iterations</td><td class="n">10.9 min</td><td class="n">23.8</td><td class="n">26.2</td><td class="n">21.3</td><td class="n">38.4</td><td class="n">78.6</td></tr>
+  <tr><td>1 GPU, 12,000 iterations</td><td class="n">30 min</td><td class="n">23.6</td><td class="n">25.5</td><td class="n">21.6</td><td class="n">38.1</td><td class="n">74.3</td></tr>
+  <tr class="ours"><td>2 GPUs, 12,000 iterations</td><td class="n">16.1 min</td><td class="n">23.2</td><td class="n">25.6</td><td class="n">20.8</td><td class="n">37.6</td><td class="n">78.3</td></tr>
+</table></div>
+<p class="note">The one-iteration lag of the pipeline costs nothing on Loc, Man and Dance. Ground
+  ends 4 mm worse in both seeds (78.6 and 78.0 vs 75.6 and 73.1); its completion is 91% vs 93%.</p>
 
 <h2 id="videos">Sim2sim on held-out motions</h2>
 <p>Rollouts from the leaderboard evaluator (MuJoCo, deterministic policy) on the four held-out splits. For each split

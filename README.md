@@ -54,6 +54,28 @@ What matters most in the recipe, measured by the effect of removing each factor 
 
 The page explains why each factor matters.
 
+## Speed against XMimic and BlinkMimic (LAFAN-40)
+
+[XMimic](https://github.com/nico-bohlinger/xmimic)'s benchmark, run on our RTX 4090s with its protocol. All runs
+train on its 40 LAFAN1 clips (SHA-256 checked) and are scored on the same clips: 4 replicas, every 100 iterations.
+Columns give minutes to BlinkMimic's target, as the mean of 3 seeds. Compilation is excluded for every method by
+XMimic's `exclude_compile.py` rule; the start-up column adds it back with warm compilation caches.
+
+| Method | GPUs | it/s | Return ≥ 0.82 | + 0 failed, held ×3 | Held, with start-up | Return at 3,500 it |
+|---|---:|---:|---:|---:|---:|---:|
+| BlinkMimic (main) | 1 | 7.8 | 2.93 | 3.45 | 3.62 | 0.865 |
+| XMimic | 1 | 9.3 | 2.32 | 3.71 | 3.96 | 0.860 |
+| **PartyMimic** | 1 | 8.2 | 2.45 | 5.17 | 5.57 | **0.883** |
+| XMimic (AL) | 2 | 13.2 | 1.71 | **2.89** | **3.17** | 0.863 |
+| **PartyMimic** (`--pipeline`) | 2 | 12.7 | **1.66** | 3.41 | 3.82 | **0.883** |
+
+![LAFAN-40 speed](docs/static/lafan_speed.png)
+
+PartyMimic reaches return 0.82 in the fewest iterations and ends highest. It is slower to zero failures: one or two
+hard training clips keep failing for a while. BlinkMimic and XMimic search for those clips with evaluation probes;
+PartyMimic dropped the probes because they did not improve held-out tracking. On the second GPU's x1 PCIe link,
+the pipeline overlaps all transfers with compute (details on the [page](docs/index.html#speed)).
+
 ## Setup
 
 Linux x86_64, an NVIDIA GPU with a CUDA 12.8 driver, and [uv](https://docs.astral.sh/uv/).
@@ -81,7 +103,13 @@ The defaults of `partymimic.train` are the PartyMimic recipe:
 ```bash
 bash scripts/train.sh logs/g1_s0  --robot g1mj --motion_dir <npz clips> --seed 0   # 12k iterations, ~30 min on a 4090
 bash scripts/train.sh logs/rp1_s0 --robot rp1  --motion_dir <npz clips> --seed 0
+# two GPUs: collection + world model on cuda:0, policy + critic on cuda:1, overlapped (1.6x the iterations per second)
+bash scripts/train.sh logs/g1_p0  --robot g1mj --motion_dir <npz clips> --seed 0 --pipeline
 ```
+
+With `--pipeline`, the policy learns from the previous iteration's data and world model, and the actor collects
+with the policy from the previous update. On the 9,173-clip G1 set this trains 12k iterations in 16 min instead of
+30 min, at the same Loc/Man error (23.2 vs 23.6 mm, 2 seeds; Ground 78.3 vs 74.3 mm).
 
 Checkpoints are written every 2,000 iterations (`ckpt_002000.pt`, ...). On G1, Loc/Man already beats the
 previous best at 2,000 iterations. At 8,000 iterations Loc/Man, Dance and Ground are all the best in the comparison.
