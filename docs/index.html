@@ -86,19 +86,21 @@
   <tr><td>SuperMimic (paper hyperparameters)</td><td class="n">52 min</td><td class="n">40.2</td><td class="n">40.5</td><td class="n">39.8</td><td class="n">64.3</td><td class="n">167.8</td></tr>
   <tr><td>NablaMimic (official config)</td><td class="n">99 min</td><td class="n">29.8</td><td class="n">32.2</td><td class="n">27.3</td><td class="n">46.8</td><td class="n">110.6</td></tr>
   <tr><td>BlinkMimic (main preset)</td><td class="n">59 min</td><td class="n">31.0</td><td class="n">31.9</td><td class="n">30.1</td><td class="n">53.8</td><td class="n">98.7</td></tr>
+  <tr><td>XMimic (BlinkMimic main in JAX, 1 GPU)</td><td class="n">50 min</td><td class="n">30.9</td><td class="n">31.8</td><td class="n">30.0</td><td class="n">53.7</td><td class="n">101.0</td></tr>
   <tr class="ours"><td>PartyMimic, 2,000 iterations</td><td class="n">6.7 min</td><td class="n">26.2</td><td class="n">29.3</td><td class="n">23.1</td><td class="n">43.1</td><td class="n">84.2</td></tr>
   <tr class="ours"><td>PartyMimic, 8,000 iterations</td><td class="n">21 min</td><td class="n">23.7</td><td class="n">26.1</td><td class="n">21.3</td><td class="n">38.2</td><td class="n">77.5</td></tr>
   <tr class="ours"><td>PartyMimic, 12,000 iterations</td><td class="n">30 min</td><td class="n">23.6</td><td class="n">25.5</td><td class="n">21.6</td><td class="n">38.1</td><td class="n">74.3</td></tr>
   <tr class="robot"><td colspan="7">RoboParty RP1 &middot; body position error (mm, lower is better)</td></tr>
   <tr><td>SuperMimic (paper hyperparameters)</td><td class="n">149 min</td><td class="n">35.0</td><td class="n">39.9</td><td class="n">30.2</td><td class="n">56.4</td><td class="n">158.4</td></tr>
   <tr><td>BlinkMimic (main preset)</td><td class="n">68 min</td><td class="n">30.7</td><td class="n">32.2</td><td class="n">29.1</td><td class="n">51.7</td><td class="n">126.0</td></tr>
+  <tr><td>XMimic (BlinkMimic main in JAX, 1 GPU)</td><td class="n">59 min</td><td class="n">30.6</td><td class="n">33.4</td><td class="n">27.9</td><td class="n">52.8</td><td class="n">126.7</td></tr>
   <tr class="ours"><td>PartyMimic, 2,000 iterations</td><td class="n">8.0 min</td><td class="n">21.2</td><td class="n">24.6</td><td class="n">17.8</td><td class="n">39.9</td><td class="n">115.7</td></tr>
   <tr class="ours"><td>PartyMimic, 8,000 iterations</td><td class="n">22 min</td><td class="n">20.1</td><td class="n">23.5</td><td class="n">16.8</td><td class="n">36.5</td><td class="n">101.8</td></tr>
   <tr class="ours"><td>PartyMimic, 12,000 iterations</td><td class="n">31 min</td><td class="n">20.0</td><td class="n">23.6</td><td class="n">16.5</td><td class="n">35.9</td><td class="n">103.6</td></tr>
 </table></div>
 <p class="note"><b>How these numbers were obtained.</b>
-  Every trained method (SuperMimic, NablaMimic, BlinkMimic, PartyMimic) was trained by us on the same machine. Each
-  run had one NVIDIA RTX 4090 (48 GB) to itself, with an i9-14900K, CUDA 12.8 and PyTorch 2.9.
+  Every trained method (SuperMimic, NablaMimic, BlinkMimic, XMimic, PartyMimic) was trained by us on the same machine. Each
+  run had one NVIDIA RTX 4090 (48 GB) to itself, with an i9-14900K, CUDA 12.8 and PyTorch 2.9 (XMimic: JAX 0.7.2).
   All methods used the same 9,173-clip training set: 9,133 BONES-SEED clips retargeted to G1 plus LAFAN1, 21.1 h at 50 Hz.
   RP1 used the same motions retargeted to RP1.
   Training time is the wall-clock time of training on one GPU, excluding export and evaluation.
@@ -112,6 +114,9 @@
   The table reports the local body position error. Loc/Man is the mean of the Loc and Man errors.
   PartyMimic rows are 2-seed means; seeds differ by 0.1&ndash;1.4 mm on Loc/Man and by 5&ndash;13 mm on Ground.
   Completion rates are given in the <a href="#completion">next table</a>.
+  XMimic ships only the G1 scene and LAFAN1 CSV clips; we added an npz clip loader and exported the G1 and RP1 scenes
+  from BlinkMimic with XMimic's own export tool (every model array matches mjlab's), and ran its defaults with BlinkMimic's
+  12,000 iterations and constraint capacity (<code>--njmax 500</code>). Its time includes its ahead-of-time compilation.
   SONIC and Mimic Lite v1.1 are the official leaderboard entries: different data and hardware, so their GPU-hours
   only indicate scale. They have no RP1 entries, and NablaMimic has no RP1 model.</p>
 
@@ -123,6 +128,7 @@
   <tr><td>SuperMimic</td><td class="n">100 / 100</td><td class="n">98.0</td><td class="n">80.0</td><td class="n">99.4 / 100</td><td class="n">98.1</td><td class="n">80.5</td></tr>
   <tr><td>NablaMimic</td><td class="n">99.3 / 100</td><td class="n">87.4</td><td class="n">82.3</td><td class="n">&ndash;</td><td class="n">&ndash;</td><td class="n">&ndash;</td></tr>
   <tr><td>BlinkMimic</td><td class="n">100 / 100</td><td class="n">96.7</td><td class="n">88.0</td><td class="n">100 / 100</td><td class="n">93.8</td><td class="n">87.8</td></tr>
+  <tr><td>XMimic</td><td class="n">99.7 / 100</td><td class="n">95.2</td><td class="n">86.6</td><td class="n">100 / 100</td><td class="n">97.6</td><td class="n">88.7</td></tr>
   <tr class="ours"><td>PartyMimic, 12,000 iterations</td><td class="n">99.8 / 98.7</td><td class="n">95.9</td><td class="n">93.4</td><td class="n">100 / 98.9</td><td class="n">94.2</td><td class="n">90.0</td></tr>
 </table></div>
 
@@ -136,7 +142,8 @@
 <p><a href="https://github.com/nico-bohlinger/xmimic">XMimic</a> rebuilds BlinkMimic's main recipe in JAX and reports
   BlinkMimic's LAFAN-40 target in 0.91 min on four H100s. We ran its 1-GPU and 2-GPU (AL) trainers, BlinkMimic main and
   PartyMimic on our two RTX 4090s, under XMimic's protocol, 3 seeds each. PartyMimic keeps its recipe unchanged; it was
-  not tuned for this benchmark.</p>
+  not tuned for this benchmark. On the 9,173-clip sets of the <a href="#results">results</a>, XMimic reproduces
+  BlinkMimic's errors (G1 30.9 vs 31.0 mm, RP1 30.6 vs 30.7 mm) in 15% less time.</p>
 <figure>
   <img src="static/lafan_speed.png" alt="LAFAN-40 evaluation return against training minutes and time to target">
 </figure>

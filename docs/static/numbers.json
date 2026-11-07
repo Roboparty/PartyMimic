@@ -65,6 +65,19 @@
    "ground": 98.7,
    "ground_prog": 88.0
   },
+  "XMimic": {
+   "minutes": 50.2,
+   "gpu_h": 0.84,
+   "lm": 30.9,
+   "loc": 31.8,
+   "loc_prog": 99.7,
+   "man": 30.0,
+   "man_prog": 100.0,
+   "dance": 53.7,
+   "dance_prog": 95.2,
+   "ground": 101.0,
+   "ground_prog": 86.6
+  },
   "PartyMimic @ 2000": {
    "minutes": 6.7,
    "gpu_h": 0.11,
@@ -131,6 +144,19 @@
    "dance_prog": 93.8,
    "ground": 126.0,
    "ground_prog": 87.8
+  },
+  "XMimic": {
+   "minutes": 59.3,
+   "gpu_h": 0.99,
+   "lm": 30.6,
+   "loc": 33.4,
+   "loc_prog": 100.0,
+   "man": 27.9,
+   "man_prog": 100.0,
+   "dance": 52.8,
+   "dance_prog": 97.6,
+   "ground": 126.7,
+   "ground_prog": 88.7
   },
   "PartyMimic @ 2000": {
    "minutes": 8.0,

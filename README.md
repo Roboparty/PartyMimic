@@ -24,6 +24,7 @@ Loc and Man.
 | SuperMimic | 52 min | 40.2 | 40.5 | 39.8 | 64.3 | 167.8 |
 | NablaMimic | 99 min | 29.8 | 32.2 | 27.3 | 46.8 | 110.6 |
 | BlinkMimic | 59 min | 31.0 | 31.9 | 30.1 | 53.8 | 98.7 |
+| XMimic | 50 min | 30.9 | 31.8 | 30.0 | 53.7 | 101.0 |
 | **PartyMimic** (2k iterations) | **6.7 min** | 26.2 | 29.3 | 23.1 | 43.1 | 84.2 |
 | **PartyMimic** (12k iterations) | **30 min** | **23.6** | 25.5 | **21.6** | **38.1** | **74.3** |
 
@@ -31,11 +32,12 @@ Loc and Man.
 |---|---:|---:|---:|---:|---:|---:|
 | SuperMimic | 149 min | 35.0 | 39.9 | 30.2 | 56.4 | 158.4 |
 | BlinkMimic | 68 min | 30.7 | 32.2 | 29.1 | 51.7 | 126.0 |
+| XMimic | 59 min | 30.6 | 33.4 | 27.9 | 52.8 | 126.7 |
 | **PartyMimic** (2k iterations) | **8.0 min** | 21.2 | 24.6 | 17.8 | 39.9 | 115.7 |
 | **PartyMimic** (12k iterations) | **31 min** | **20.0** | **23.6** | **16.5** | **35.9** | **103.6** |
 
-<sub>SuperMimic (paper hyperparameters), NablaMimic (official config), BlinkMimic (main preset) and PartyMimic were
-all trained by us. Each run had one RTX 4090 to itself, and all used the same 9,173 clips (BONES-SEED + LAFAN1,
+<sub>SuperMimic (paper hyperparameters), NablaMimic (official config), BlinkMimic (main preset), XMimic (its defaults,
+BlinkMimic's 12k iterations; npz loader and RP1 scene added) and PartyMimic were all trained by us. Each run had one RTX 4090 to itself, and all used the same 9,173 clips (BONES-SEED + LAFAN1,
 retargeted per robot). Time is training wall-clock on one GPU. PartyMimic rows are 2-seed means.
 Test motions come from a different mocap source; no 1-s window lies within 0.059 rad RMS of the training set.
 SONIC and Mimic Lite are official leaderboard entries with different data and hardware. Full protocol and
@@ -71,6 +73,7 @@ XMimic's `exclude_compile.py` rule; the start-up column adds it back with warm c
 
 ![LAFAN-40 speed](docs/static/lafan_speed.png)
 
+On the 9,173-clip sets XMimic matches BlinkMimic's held-out error in 15% less time (tables above). On LAFAN-40,
 PartyMimic reaches return 0.82 in the fewest iterations and ends highest. It is slower to zero failures: one or two
 hard training clips keep failing for a while. BlinkMimic and XMimic search for those clips with evaluation probes;
 PartyMimic dropped the probes because they did not improve held-out tracking. On the second GPU's x1 PCIe link,
