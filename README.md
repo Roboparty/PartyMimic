@@ -1,8 +1,12 @@
 # PartyMimic
 
 **General humanoid motion tracking in minutes on one GPU.** PartyMimic trains one whole-body tracking policy for a
-9,173-clip motion library (21 h) in **7–30 minutes on a single RTX 4090**. On held-out motions it has the lowest
-tracking error of every method we compared, on two humanoids (Unitree G1 and RoboParty RP1).
+9,173-clip motion library (21 h) on a **single RTX 4090** (22 GB peak):
+
+- **Fast:** 7–30 minutes of training.
+- **Precise:** the lowest tracking error of every method we compared, on two humanoids (Unitree G1 and RoboParty RP1).
+- **Generalizes:** every result is on held-out motions from another mocap source, and it tracks unseen
+  high-dynamic motions zero-shot.
 
 PartyMimic is a model-based learner in the SuperMimic family. It fits an online MLP world model, trains the
 policy by backpropagating through 32 imagined steps of that model, and uses a critic beyond the horizon. Its
@@ -11,7 +15,7 @@ videos, the recipe ablation and the SuperMimic full-factor ablation.
 
 ![Loc/Man error against training compute](docs/static/hero.png)
 
-## Results
+## Results on held-out motions
 
 Body position error (mm, lower is better) on the held-out MotionDecode splits, scored by the
 [sim2real leaderboard](https://egalahad.github.io/sim2real/leaderboard/) sim2sim evaluator. Loc/Man is the mean of
@@ -58,7 +62,7 @@ starts to turn without taking off: its pelvis rises 0.08–0.10 m, against 0.35 
 flips instead of 1, without losing held-out Loc/Man accuracy; front tuck somersaults stay unlearned. Videos are on the
 [page](docs/index.html#highdyn).
 
-What matters most in the recipe, measured by the effect of removing each factor on G1 Loc/Man:
+**The PartyMimic recipe**: what matters most, measured by the effect of removing each factor on G1 Loc/Man:
 
 | Factor | Effect when removed |
 |---|---|
@@ -71,9 +75,9 @@ What matters most in the recipe, measured by the effect of removing each factor 
 
 The page explains why each factor matters.
 
-## Speed against XMimic and BlinkMimic (LAFAN-40)
+## Speed on LAFAN: against XMimic and BlinkMimic (LAFAN-40)
 
-[XMimic](https://github.com/nico-bohlinger/xmimic)'s benchmark, run on our RTX 4090s with its protocol. All runs
+This comparison is on the LAFAN dataset, not the held-out library. [XMimic](https://github.com/nico-bohlinger/xmimic)'s benchmark, run on our RTX 4090s with its protocol. All runs
 train on its 40 LAFAN1 clips (SHA-256 checked) and are scored on the same clips: 4 replicas, every 100 iterations.
 Columns give minutes to BlinkMimic's target, as the mean of 3 seeds. Compilation is excluded for every method by
 XMimic's `exclude_compile.py` rule; the start-up column adds it back with warm compilation caches.
@@ -93,6 +97,13 @@ PartyMimic reaches return 0.82 in the fewest iterations and ends highest. It is 
 hard training clips keep failing for a while. BlinkMimic and XMimic search for those clips with evaluation probes;
 PartyMimic dropped the probes because they did not improve held-out tracking. On the second GPU's x1 PCIe link,
 the pipeline overlaps all transfers with compute (details on the [page](docs/index.html#speed)).
+
+GPU memory on the full G1 library (peak per card over 300 iterations, `nvidia-smi` once a second):
+
+| Mode | GPU 0 | GPU 1 | it/s |
+|---|---:|---:|---:|
+| 1 GPU | 22 GB | — | 7.7 |
+| 2 GPUs (`--pipeline`) | 14 GB (collection + world model) | 16 GB (policy + critic) | 12.8 |
 
 ## Setup
 
