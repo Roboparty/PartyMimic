@@ -53,10 +53,10 @@ PartyMimic 2-seed mean, other methods at the checkpoints in the tables above):
 
 Where the motion can be tracked (jumps, martial arts), PartyMimic is the most accurate on both robots; RP1 has the
 same pattern (41.5 / 27.7 mm against 49.3 mm or more). Flips fail for every method, SONIC included. The robot
-starts to turn without taking off: its pelvis rises 0.08–0.10 m, against a median of 0.35–0.37 m in the reference.
-Only 7 of the 9,173 training clips are flips or cartwheels. With 105 extra flip, twist-jump and kip-up clips in
-training, the same recipe completes 56% of the flips instead of 6%, without losing held-out Loc/Man accuracy (23.0 mm). Clips, videos and the
-diagnosis are on the [page](docs/index.html#highdyn).
+starts to turn without taking off: its pelvis rises 0.08–0.10 m, against 0.35 m in the reference. Only 7 of the
+9,173 training clips are flips. With 105 extra flip, twist-jump and kip-up clips in training, G1 completes 10 of 18
+flips instead of 1, without losing held-out Loc/Man accuracy; front tuck somersaults stay unlearned. Videos are on the
+[page](docs/index.html#highdyn).
 
 What matters most in the recipe, measured by the effect of removing each factor on G1 Loc/Man:
 
