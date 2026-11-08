@@ -15,6 +15,16 @@ videos, the recipe ablation and the SuperMimic full-factor ablation.
 
 ![Loc/Man error against training compute](docs/static/hero.png)
 
+## GPU memory
+
+Peak memory per card on the full G1 library (300 iterations, `nvidia-smi` once a second). One standard 24 GB
+RTX 4090 is enough:
+
+| Mode | GPU 0 | GPU 1 | it/s |
+|---|---:|---:|---:|
+| 1 GPU | 22 GB | — | 7.7 |
+| 2 GPUs (`--pipeline`) | 14 GB (collection + world model) | 16 GB (policy + critic) | 12.8 |
+
 ## Results on held-out motions
 
 Body position error (mm, lower is better) on the held-out MotionDecode splits, scored by the
@@ -97,13 +107,6 @@ PartyMimic reaches return 0.82 in the fewest iterations and ends highest. It is 
 hard training clips keep failing for a while. BlinkMimic and XMimic search for those clips with evaluation probes;
 PartyMimic dropped the probes because they did not improve held-out tracking. On the second GPU's x1 PCIe link,
 the pipeline overlaps all transfers with compute (details on the [page](docs/index.html#speed)).
-
-GPU memory on the full G1 library (peak per card over 300 iterations, `nvidia-smi` once a second):
-
-| Mode | GPU 0 | GPU 1 | it/s |
-|---|---:|---:|---:|
-| 1 GPU | 22 GB | — | 7.7 |
-| 2 GPUs (`--pipeline`) | 14 GB (collection + world model) | 16 GB (policy + critic) | 12.8 |
 
 ## Setup
 

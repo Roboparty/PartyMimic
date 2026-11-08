@@ -79,6 +79,18 @@
   <div class="card"><b>20.0 mm</b><span>RP1 Loc/Man error after 31 min with the same recipe, no tuning (BlinkMimic: 30.7 mm after 68 min)</span></div>
 </div>
 
+<h2 id="memory">GPU memory</h2>
+<p>Training on the full G1 library peaks at about 22 GB on one card, so it also fits a standard 24 GB RTX 4090. With two GPUs, the <a href="#speed">pipeline</a>
+  (<code>--pipeline</code>) splits the work so that neither GPU needs more than 16 GB.</p>
+<div class="scroll"><table>
+  <tr><th>Mode</th><th class="n">GPU 0</th><th class="n">GPU 1</th><th class="n">it/s</th></tr>
+  <tr><td>1 GPU</td><td class="n">22 GB</td><td class="n">&mdash;</td><td class="n">7.7</td></tr>
+  <tr class="ours"><td>2 GPUs (<code>--pipeline</code>)</td><td class="n">14 GB (collection + world model)</td>
+      <td class="n">16 GB (policy + critic)</td><td class="n">12.8</td></tr>
+</table></div>
+<p class="note">Peak memory per card (1 GPU: 22,461 MiB) over 300 iterations with the G1 results configuration
+  (9,173 clips), sampled once a second with <code>nvidia-smi</code>, on otherwise idle GPUs.</p>
+
 <h2 id="results">Results on held-out motions</h2>
 <p><b>Every number in this section is measured on held-out motions</b>: MotionDecode test splits from a different
   mocap source than the training library. PartyMimic is BlinkMimic's
@@ -213,18 +225,6 @@
 </table></div>
 <p class="note">The one-iteration lag of the pipeline costs nothing on Loc, Man and Dance. Ground
   ends 4 mm worse in both seeds (78.6 and 78.0 vs 75.6 and 73.1); its completion is 91% vs 93%.</p>
-<h3 id="memory">GPU memory</h3>
-<p>Training on the full G1 library peaks at about 22 GB on one card, so it also fits a standard 24 GB RTX 4090. The pipeline splits
-  the work so that neither GPU needs more than 16 GB.</p>
-<div class="scroll"><table>
-  <tr><th>Mode</th><th class="n">GPU 0</th><th class="n">GPU 1</th><th class="n">it/s</th></tr>
-  <tr><td>1 GPU</td><td class="n">22 GB</td><td class="n">&mdash;</td><td class="n">7.7</td></tr>
-  <tr class="ours"><td>2 GPUs (<code>--pipeline</code>)</td><td class="n">14 GB (collection + world model)</td>
-      <td class="n">16 GB (policy + critic)</td><td class="n">12.8</td></tr>
-</table></div>
-<p class="note">Peak memory per card (1 GPU: 22,461 MiB) over 300 iterations with the G1 results configuration
-  (9,173 clips), sampled once a second with <code>nvidia-smi</code>, on otherwise idle GPUs.</p>
-
 <h2 id="videos">Sim2sim on held-out motions</h2>
 <p>Rollouts from the leaderboard evaluator (MuJoCo, deterministic policy) on the four held-out splits. For each split
   we show the clip with the <b>median</b> error, so these clips are typical rather than the best ones. The robot is
