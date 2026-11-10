@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "partymimic"
 version = "1.0.0"
-description = "PartyMimic: one whole-body tracking policy for a 9k-clip motion library in 30 minutes on one GPU, with a differentiable world model."
+description = "PartyMimic: one whole-body humanoid tracking policy for a 41 h motion library in 26 minutes on one GPU, with a differentiable world model."
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 readme = "README.md"

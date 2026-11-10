@@ -9,6 +9,7 @@ build_*.log
 # training runs: checkpoints, logs
 logs/
 *.pt
+!checkpoints/*.pt
 # rendered videos and recorded trajectories (derived from CC BY-NC-ND LAFAN1 motions)
 *.mp4
 !docs/static/videos/*.mp4

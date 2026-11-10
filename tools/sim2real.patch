@@ -1,0 +1,491 @@
+diff --git a/scripts/tracking_experiment/compute_tracking_metrics.py b/scripts/tracking_experiment/compute_tracking_metrics.py
+index 3255454..c015b02 100644
+--- a/scripts/tracking_experiment/compute_tracking_metrics.py
++++ b/scripts/tracking_experiment/compute_tracking_metrics.py
+@@ -53,6 +53,35 @@ RETURN_BODY_NAMES = (
+ WRIST_BODY_NAMES = ("left_wrist_yaw_link", "right_wrist_yaw_link")
+ TERMINATION_PELVIS_HEIGHT_THRESHOLD_M = 0.3
+ 
++# RoboParty RP1 (rp1_28dof) counterparts: base_link / waist_yaw_link for pelvis / torso, the ankle-roll link for the
++# toe (no toe body) and the wrist-pitch link, the last link of the RP1 arm, for the wrist.
++BODY_SETS = {
++    "g1": {
++        "tracking": TRACKING_BODY_PATTERNS,
++        "anchor": ANCHOR_BODY_NAME,
++        "return_anchor": RETURN_ANCHOR_BODY_NAME,
++        "termination_anchor": TERMINATION_ANCHOR_BODY_NAME,
++        "return": RETURN_BODY_NAMES,
++        "wrist": WRIST_BODY_NAMES,
++    },
++    "rp1": {
++        "tracking": ("base_link", "waist_yaw_link", ".*_hip_yaw_link", ".*_knee_link", ".*_ankle_roll_link",
++                     ".*_shoulder_yaw_link", ".*_elbow_link", ".*_wrist_pitch_link"),
++        "anchor": "base_link",
++        "return_anchor": "waist_yaw_link",
++        "termination_anchor": "base_link",
++        "return": ("base_link", "left_hip_roll_link", "left_knee_link", "left_ankle_roll_link", "right_hip_roll_link",
++                   "right_knee_link", "right_ankle_roll_link", "waist_yaw_link", "left_shoulder_roll_link",
++                   "left_elbow_link", "left_wrist_pitch_link", "right_shoulder_roll_link", "right_elbow_link",
++                   "right_wrist_pitch_link"),
++        "wrist": ("left_wrist_pitch_link", "right_wrist_pitch_link"),
++    },
++}
++
++
++def _body_set(names: list[str]) -> dict:
++    return BODY_SETS["rp1" if "pelvis" not in names and "waist_yaw_link" in names else "g1"]
++
+ 
+ def _parse_args() -> argparse.Namespace:
+     parser = argparse.ArgumentParser(
+@@ -119,14 +148,26 @@ def _quat_angle_magnitude(quat: np.ndarray, eps: float = 1.0e-9) -> np.ndarray:
+     return 2.0 * np.arctan2(xyz_norm, np.maximum(np.abs(quat[..., 0]), eps))
+ 
+ 
++def twist_yaw_quat(quat: np.ndarray) -> np.ndarray:
++    """Yaw of the swing-twist decomposition about the world z axis (wxyz): continuous when the anchor lies on its back
++    or front, where projected_yaw_quat switches between its x-axis and z-axis branches."""
++    twist = np.zeros_like(quat)
++    twist[..., 0], twist[..., 3] = quat[..., 0], quat[..., 3]
++    norm = np.linalg.norm(twist, axis=-1, keepdims=True)
++    identity = np.zeros_like(quat)
++    identity[..., 0] = 1.0
++    return np.where(norm > 1.0e-9, twist / np.maximum(norm, 1.0e-9), identity)
++
++
+ def _local_tracking_state(
+     body_pos_w: np.ndarray,
+     body_quat_w: np.ndarray,
+     anchor_idx: int,
++    yaw_fn=projected_yaw_quat,
+ ) -> tuple[np.ndarray, np.ndarray]:
+     anchor_pos = body_pos_w[:, anchor_idx].copy()
+     anchor_pos[:, 2] = 0.0
+-    anchor_yaw = projected_yaw_quat(body_quat_w[:, anchor_idx])
++    anchor_yaw = yaw_fn(body_quat_w[:, anchor_idx])
+     anchor_yaw_expanded = np.broadcast_to(
+         anchor_yaw[:, None, :],
+         body_quat_w.shape,
+@@ -151,9 +192,10 @@ def _normalized_tracking_return(
+     motion_t: np.ndarray,
+     motion_steps: int,
+ ) -> tuple[float, float, bool, str, int, int]:
+-    reward_anchor_idx = names.index(RETURN_ANCHOR_BODY_NAME)
+-    termination_anchor_idx = names.index(TERMINATION_ANCHOR_BODY_NAME)
+-    body_indices = [names.index(name) for name in RETURN_BODY_NAMES]
++    bs = _body_set(names)
++    reward_anchor_idx = names.index(bs["return_anchor"])
++    termination_anchor_idx = names.index(bs["termination_anchor"])
++    body_indices = [names.index(name) for name in bs["return"]]
+     delta_pos_w = robot_pos[:, reward_anchor_idx].copy()
+     delta_pos_w[:, 2] = motion_pos[:, reward_anchor_idx, 2]
+     delta_yaw_w = projected_yaw_quat(
+@@ -244,8 +286,9 @@ def _compute_one(path: Path) -> dict[str, object]:
+     data = {key: loaded[key] for key in loaded.files}
+     frame_idx = _select_policy_frames(data)
+     names = [str(name) for name in np.asarray(data["body_names"]).tolist()]
+-    tracking_indices = _indices_for_patterns(names, TRACKING_BODY_PATTERNS)
+-    anchor_idx = names.index(ANCHOR_BODY_NAME)
++    bs = _body_set(names)
++    tracking_indices = _indices_for_patterns(names, bs["tracking"])
++    anchor_idx = names.index(bs["anchor"])
+ 
+     robot_pos = np.asarray(data["robot_body_pos_w"], dtype=np.float32)[frame_idx]
+     robot_quat = np.asarray(data["robot_body_quat_w"], dtype=np.float32)[frame_idx]
+@@ -269,7 +312,7 @@ def _compute_one(path: Path) -> dict[str, object]:
+             robot_quat_local[:, tracking_indices],
+         )
+     )
+-    wrist_indices = [names.index(name) for name in WRIST_BODY_NAMES]
++    wrist_indices = [names.index(name) for name in bs["wrist"]]
+     wrist_pos_error_local = np.linalg.norm(
+         motion_pos_local[:, wrist_indices] - robot_pos_local[:, wrist_indices],
+         axis=-1,
+@@ -305,6 +348,13 @@ def _compute_one(path: Path) -> dict[str, object]:
+     progress = min(1.0, max(0.0, float(termination_motion_t) / float(motion_denominator)))
+     local_body_tracking_error = float(np.mean(body_pos_error_local[:pre_end]))
+     local_body_orientation_error = float(np.mean(body_ori_error_local[:pre_end]))
++    # supplementary: the same errors in the twist-yaw anchor frame (termination and the official metrics unchanged)
++    robot_pos_tw, robot_quat_tw = _local_tracking_state(robot_pos, robot_quat, anchor_idx, twist_yaw_quat)
++    motion_pos_tw, motion_quat_tw = _local_tracking_state(motion_pos, motion_quat, anchor_idx, twist_yaw_quat)
++    pos_err_tw = np.linalg.norm(motion_pos_tw[:, tracking_indices] - robot_pos_tw[:, tracking_indices], axis=-1)
++    ori_err_tw = _quat_angle_magnitude(
++        quat_mul(quat_conjugate(motion_quat_tw[:, tracking_indices]), robot_quat_tw[:, tracking_indices])
++    )
+     wrist_tracking_error = float(np.mean(wrist_pos_error_local[:pre_end]))
+     wrist_orientation_error = float(np.mean(wrist_ori_error_local[:pre_end]))
+ 
+@@ -338,6 +388,8 @@ def _compute_one(path: Path) -> dict[str, object]:
+         "wrist_tracking_error": wrist_tracking_error,
+         "wrist_orientation_error": wrist_orientation_error,
+         "mpjpe": local_body_tracking_error,
++        "local_body_tracking_error_twist": float(np.mean(pos_err_tw[:pre_end])),
++        "local_body_orientation_error_twist": float(np.mean(ori_err_tw[:pre_end])),
+         "normalized_tracking_return": normalized_tracking_return,
+         "mean_tracking_reward": mean_tracking_reward,
+         "return_terminated": int(return_terminated),
+@@ -371,6 +423,10 @@ def _summary(rows: list[dict[str, object]]) -> dict[str, object]:
+             [float(row["wrist_orientation_error"]) for row in rows]
+         ),
+         "mpjpe": _mean_std([float(row["mpjpe"]) for row in rows]),
++        "local_body_tracking_error_twist": _mean_std([float(row["local_body_tracking_error_twist"]) for row in rows]),
++        "local_body_orientation_error_twist": _mean_std(
++            [float(row["local_body_orientation_error_twist"]) for row in rows]
++        ),
+         "normalized_tracking_return": _mean_std(
+             [float(row["normalized_tracking_return"]) for row in rows],
+         ),
+diff --git a/scripts/tracking_experiment/run_motiondecode_eval.py b/scripts/tracking_experiment/run_motiondecode_eval.py
+index d8440f4..68507df 100644
+--- a/scripts/tracking_experiment/run_motiondecode_eval.py
++++ b/scripts/tracking_experiment/run_motiondecode_eval.py
+@@ -34,6 +34,7 @@ def main() -> None:
+     parser.add_argument("--policy", action="append", required=True, help="name=deploy_yaml")
+     parser.add_argument("--output-dir", type=Path, required=True)
+     parser.add_argument("--max-workers", type=int, default=1)
++    parser.add_argument("--robot", default="g1", help="robot config of the evaluator (rp1: datasets of the RP1 retarget)")
+     parser.add_argument("--skip-existing", action="store_true")
+     parser.add_argument("--dry-run", action="store_true", help="Verify datasets and print evaluation commands.")
+     args = parser.parse_args()
+@@ -50,7 +51,7 @@ def main() -> None:
+         cmd = [sys.executable, str(SCRIPT_DIR / "run_tracking_metrics_eval.py"),
+                "--motions-root", str(root), "--motion-list", str(root / "motion-list.txt"),
+                "--output-dir", str(output), "--max-workers", str(args.max_workers),
+-               "--seeds", "0", "--initial-pause-s", "0.0"]
++               "--seeds", "0", "--initial-pause-s", "0.0", "--robot", args.robot]
+         for policy in args.policy:
+             cmd += ["--policy", policy]
+         if args.skip_existing:
+diff --git a/sim2real/config/robots/__init__.py b/sim2real/config/robots/__init__.py
+index 0d6a33a..f6e0047 100644
+--- a/sim2real/config/robots/__init__.py
++++ b/sim2real/config/robots/__init__.py
+@@ -1,6 +1,7 @@
+ from sim2real.config.robots.base import RobotCfg
+ from sim2real.config.robots.g1 import G1_CFG
+ from sim2real.config.robots.h2 import H2_CFG
++from sim2real.config.robots.rp1 import RP1_CFG
+ from typing import Dict
+ 
+ 
+@@ -8,6 +9,7 @@ _ROBOT_CFGS: Dict[str, RobotCfg] = {
+     G1_CFG.name: G1_CFG,
+     H2_CFG.name: H2_CFG,
+     "unitree_h2": H2_CFG,
++    RP1_CFG.name: RP1_CFG,
+ }
+ 
+ 
+diff --git a/sim2real/config/robots/rp1.py b/sim2real/config/robots/rp1.py
+new file mode 100644
+index 0000000..910fa81
+--- /dev/null
++++ b/sim2real/config/robots/rp1.py
+@@ -0,0 +1,69 @@
++from __future__ import annotations
++
++import os
++import re
++
++import mujoco
++
++from sim2real.config.robots.base import RobotCfg
++
++# RoboParty RP1 (rp1_28dof): UFO's capsule-collision mjlab MJCF (XML motors named after their joints), with RoboParty's
++# current effort / velocity limits, armatures and standing pose (robolab RP1_24DOF_CFG at 45cdc13; the wrist yaw / pitch
++# joints it lacks take its wrist's values and a zero default) and rp1_description's joint frictionloss 0.1 (8c12d13).
++# RP1_MJCF: PartyMimic's data/rp1_28dof_mjlab/rp1_28dof.xml (tools/download_data.sh); scripts/eval.sh sets it.
++RP1_MJCF_PATH = os.environ.get("RP1_MJCF", "")
++
++# (joint regex, effort limit, velocity limit, armature)
++_LIMITS = (
++    ("waist_(roll|yaw)_joint|.*_hip_(pitch|roll)_joint|.*_knee_joint", 140.0, 13.61357, 0.0290856),
++    (".*_(hip_yaw|shoulder_pitch)_joint", 55.0, 16.23156, 0.00884),
++    (".*_ankle_(pitch|roll)_joint", 64.0, 15.70796, 0.006266268),
++    (".*_(shoulder_(roll|yaw)|elbow|wrist_(roll|yaw|pitch))_joint", 32.0, 15.70796, 0.00313313),
++)
++DEFAULT_JOINT_POS = {
++    "left_hip_pitch_joint": -0.1, "right_hip_pitch_joint": 0.1,
++    "left_knee_joint": -0.3, "right_knee_joint": 0.3,
++    "left_ankle_pitch_joint": -0.2, "right_ankle_pitch_joint": -0.2,
++    "left_shoulder_pitch_joint": 0.2, "right_shoulder_pitch_joint": -0.2,
++    "left_shoulder_roll_joint": 0.2, "right_shoulder_roll_joint": -0.2,
++    "left_elbow_joint": -1.2, "right_elbow_joint": 1.2,
++}  # fmt: skip
++
++
++def _limit(joint: str, i: int) -> float:
++    for pat, *vals in _LIMITS:
++        if re.fullmatch(pat, joint):
++            return vals[i]
++    raise KeyError(joint)
++
++
++def _parse() -> tuple[tuple[str, ...], tuple[str, ...], dict[str, tuple[float, float]]]:
++    if not RP1_MJCF_PATH:
++        return (), (), {}
++    m = mujoco.MjModel.from_xml_path(RP1_MJCF_PATH)
++    joints = [i for i in range(m.njnt) if m.jnt_type[i] != mujoco.mjtJoint.mjJNT_FREE]
++    names = tuple(m.joint(i).name for i in joints)
++    bodies = tuple(m.body(i).name for i in range(1, m.nbody))
++    return names, bodies, {m.joint(i).name: tuple(float(x) for x in m.jnt_range[i]) for i in joints}
++
++
++RP1_JOINT_NAMES, RP1_BODY_NAMES, _RANGES = _parse()
++
++RP1_CFG = RobotCfg(
++    name="rp1",
++    joint_names=RP1_JOINT_NAMES,
++    body_names=RP1_BODY_NAMES,
++    joint_pos_lower_limit={j: r[0] for j, r in _RANGES.items()},
++    joint_pos_upper_limit={j: r[1] for j, r in _RANGES.items()},
++    joint_velocity_limit={j: _limit(j, 1) for j in RP1_JOINT_NAMES},
++    joint_effort_limit={j: _limit(j, 0) for j in RP1_JOINT_NAMES},
++    joint_armature={j: _limit(j, 2) for j in RP1_JOINT_NAMES},
++    joint_frictionloss={j: 0.1 for j in RP1_JOINT_NAMES},
++    mjcf_path=RP1_MJCF_PATH,
++    default_qpos=(0.0, 0.0, 0.78, 1.0, 0.0, 0.0, 0.0, *(DEFAULT_JOINT_POS.get(j, 0.0) for j in RP1_JOINT_NAMES)),
++    root_joint_names=("base_link_freejoint",),
++    viewer_track_body_names=("base_link",),
++    elastic_band_attach_body_names=("waist_yaw_link", "base_link"),
++)
++
++__all__ = ["RP1_CFG", "RP1_JOINT_NAMES", "RP1_BODY_NAMES", "RP1_MJCF_PATH"]
+diff --git a/sim2real/rl_policy/observations/__init__.py b/sim2real/rl_policy/observations/__init__.py
+index 3864b91..4835c16 100644
+--- a/sim2real/rl_policy/observations/__init__.py
++++ b/sim2real/rl_policy/observations/__init__.py
+@@ -10,6 +10,7 @@ from .motion import *
+ from .mimic_lite import *
+ from .scalebfm import *
+ from .sonic import *
++from .supermimic import *
+ from .teleopit import *
+ from .twist2 import *
+ from .velocity import *
+diff --git a/sim2real/rl_policy/observations/supermimic.py b/sim2real/rl_policy/observations/supermimic.py
+new file mode 100644
+index 0000000..f50b20b
+--- /dev/null
++++ b/sim2real/rl_policy/observations/supermimic.py
+@@ -0,0 +1,181 @@
++"""Raw inputs of a PartyMimic / SuperMimic tracking ONNX (PartyMimic tools/export_deploy_onnx.py).
++
++The ONNX builds the goal geometry itself; these terms only hand over
++    proprio            history of [joint pos - default, joint vel, root angular velocity (body), projected gravity,
++                       previous action], oldest first
++    ref_joint          reference joint pos and vel per future step
++    ref_anchor         reference anchor world position and wxyz quaternion per future step
++    robot_anchor_quat  robot anchor world quaternion from forward kinematics, yaw-aligned to the motion at reset
++Motion step 0 is the frame the next action should reach, so the policy's "current" reference frame is step -1.
++"""
++from __future__ import annotations
++
++from typing import Any, Dict
++
++import mujoco
++import numpy as np
++
++from sim2real.rl_policy.observations.base import Observation
++from sim2real.rl_policy.observations.motion import motion_joint_obs, motion_obs
++from sim2real.utils.math import projected_yaw_quat, quat_conjugate, quat_mul, quat_rotate_inverse_numpy
++
++
++class proprio_history(Observation, namespace="supermimic"):
++    def __init__(self, history_steps: int = 10, **kwargs):
++        super().__init__(**kwargs)
++        names = list(self.state_processor.joint_names)
++        self.joint_ids = np.asarray([names.index(n) for n in self.env.policy_joint_names], dtype=int)
++        self.default = np.asarray(self.env.default_dof_angles, dtype=np.float32)[
++            [list(self.env.joint_names_simulation).index(n) for n in self.env.policy_joint_names]]
++        self.n_act = len(self.joint_ids)
++        self.hist = np.zeros((history_steps, 2 * self.n_act + 6 + self.n_act), dtype=np.float32)
++
++    def _frame(self, prev_action: np.ndarray) -> np.ndarray:
++        sp = self.state_processor
++        gravity = quat_rotate_inverse_numpy(sp.root_quat_w[None], np.array([[0.0, 0.0, -1.0]]))[0]
++        return np.concatenate([sp.joint_pos[self.joint_ids] - self.default, sp.joint_vel[self.joint_ids],
++                               sp.root_ang_vel_b, gravity, prev_action]).astype(np.float32)
++
++    def reset(self):
++        self.hist[:] = self._frame(np.zeros(self.n_act, dtype=np.float32))
++
++    def update(self, data: Dict[str, Any]) -> None:
++        self.hist = np.roll(self.hist, -1, axis=0)
++        self.hist[-1] = self._frame(np.asarray(data["action"], dtype=np.float32))
++
++    def compute(self) -> np.ndarray:
++        return self.hist.reshape(-1)
++
++
++class ref_joint(motion_joint_obs, namespace="supermimic"):
++    def compute(self) -> np.ndarray:
++        jp, jv = self._select(self.ref_joint_pos_future), self._select(self.ref_joint_vel_future)
++        return np.concatenate([jp, jv], -1).reshape(-1)
++
++
++class ref_anchor(motion_obs, namespace="supermimic"):
++    def compute(self) -> np.ndarray:
++        md = self.env.motion_data
++        pos = self._select(md.body_pos_w[:, :, self._anchor_body_idx])
++        quat = self._select(md.body_quat_w[:, :, self._anchor_body_idx])
++        return np.concatenate([pos, quat], -1).reshape(-1)
++
++
++class robot_anchor_quat(motion_obs, namespace="supermimic"):
++    """Robot anchor-body orientation by forward kinematics of the measured root orientation and joint angles,
++    expressed in the motion's world frame: the yaw offset between robot and motion root is fixed at reset."""
++
++    def __init__(self, **kwargs):
++        super().__init__(**kwargs)
++        self.model = mujoco.MjModel.from_xml_path(str(self.env.robot_cfg.resolve_mjcf_path()))
++        self.data = mujoco.MjData(self.model)
++        self.body = self.model.body(self.anchor_body_name).id
++        free = [i for i in range(self.model.njnt) if self.model.jnt_type[i] == mujoco.mjtJoint.mjJNT_FREE][0]
++        self.root_adr = int(self.model.jnt_qposadr[free])
++        self.joint_adr = np.asarray([self.model.joint(n).qposadr[0] for n in self.state_processor.joint_names])
++        self.offset = np.array([1.0, 0.0, 0.0, 0.0])
++
++    def _fk(self) -> np.ndarray:
++        sp = self.state_processor
++        self.data.qpos[self.root_adr + 3:self.root_adr + 7] = sp.root_quat_w
++        self.data.qpos[self.joint_adr] = sp.joint_pos
++        mujoco.mj_kinematics(self.model, self.data)
++        return self.data.xquat[self.body].copy()
++
++    def reset(self):
++        super().reset()
++        self.offset = quat_mul(projected_yaw_quat(self.ref_root_quat_w[0]),
++                               quat_conjugate(projected_yaw_quat(self.state_processor.root_quat_w)))
++
++    def compute(self) -> np.ndarray:
++        return quat_mul(self.offset, self._fk()).astype(np.float32).reshape(-1)
++
++
++class ref_joint_pos(motion_joint_obs, namespace="supermimic"):
++    def compute(self) -> np.ndarray:
++        return self._select(self.ref_joint_pos_future).reshape(-1)
++
++
++class residual_proprio_history(motion_joint_obs, namespace="supermimic"):
++    """proprio_history of a residual-action policy (NablaMimic --residual-action): the setpoint is the next reference
++    frame's joint pos + scale * a, so the previous action is handed over as a = output - (ref - default) / scale,
++    with ref the reference at motion step -1 after the step (the frame that action aimed at); 0 after a reset."""
++
++    def __init__(self, history_steps: int = 10, **kwargs):
++        super().__init__(future_steps=[-1], **kwargs)
++        names = list(self.state_processor.joint_names)
++        self.joint_ids = np.asarray([names.index(n) for n in self.env.policy_joint_names], dtype=int)
++        self.default = np.asarray(self.env.default_dof_angles, dtype=np.float32)[
++            [list(self.env.joint_names_simulation).index(n) for n in self.env.policy_joint_names]]
++        self.n_act = len(self.joint_ids)
++        self.hist = np.zeros((history_steps, 3 * self.n_act + 6), dtype=np.float32)
++
++    def _frame(self, prev_action: np.ndarray) -> np.ndarray:
++        sp = self.state_processor
++        gravity = quat_rotate_inverse_numpy(sp.root_quat_w[None], np.array([[0.0, 0.0, -1.0]]))[0]
++        return np.concatenate([sp.joint_pos[self.joint_ids] - self.default, sp.joint_vel[self.joint_ids],
++                               sp.root_ang_vel_b, gravity, prev_action]).astype(np.float32)
++
++    def reset(self):
++        super().reset()
++        self.hist[:] = self._frame(np.zeros(self.n_act, dtype=np.float32))
++
++    def update(self, data: Dict[str, Any]) -> None:
++        super().update(data)
++        ref = self._select(self.ref_joint_pos_future).reshape(-1)
++        a = np.asarray(data["action"], dtype=np.float32) - (ref - self.default) / np.asarray(self.env.action_scale)
++        self.hist = np.roll(self.hist, -1, axis=0)
++        self.hist[-1] = self._frame(a.astype(np.float32))
++
++    def compute(self) -> np.ndarray:
++        return self.hist.reshape(-1)
++
++
++class ref_root(motion_obs, namespace="supermimic"):
++    """Reference root-body world position and wxyz quaternion per future step."""
++
++    def compute(self) -> np.ndarray:
++        md = self.env.motion_data
++        pos = self._select(md.body_pos_w[:, :, self._root_body_idx])
++        quat = self._select(md.body_quat_w[:, :, self._root_body_idx])
++        return np.concatenate([pos, quat], -1).reshape(-1)
++
++
++class root_quat_history(robot_anchor_quat, namespace="supermimic"):
++    """History of [robot root quaternion in the motion frame, reference root quaternion at motion step -1], oldest
++    first (BlinkMimic observes the reference-relative root orientation at every history step)."""
++
++    def __init__(self, history_steps: int = 10, **kwargs):
++        super().__init__(**kwargs)
++        self.hist = np.zeros((history_steps, 8), dtype=np.float32)
++        self.cur = self._motion_step_index(-1)
++
++    def _frame(self) -> np.ndarray:
++        ref = self.env.motion_data.body_quat_w[0, self.cur, self._root_body_idx]
++        return np.concatenate([quat_mul(self.offset, self.state_processor.root_quat_w), ref]).astype(np.float32)
++
++    def reset(self):
++        super().reset()
++        self.hist[:] = self._frame()
++
++    def update(self, data: Dict[str, Any]) -> None:
++        super().update(data)
++        self.hist = np.roll(self.hist, -1, axis=0)
++        self.hist[-1] = self._frame()
++
++    def compute(self) -> np.ndarray:
++        return self.hist.reshape(-1)
++
++
++class ref_bodies(motion_obs, namespace="supermimic"):
++    """Reference world position and wxyz quaternion of ``body_names`` (in the given order) per future step, step-major
++    (PartyMimic --interface sparse5 keypoints)."""
++
++    def __init__(self, **kwargs):
++        kwargs.setdefault("body_order", "given")
++        super().__init__(**kwargs)
++
++    def compute(self) -> np.ndarray:
++        pos = self._select(self.ref_body_pos_future_w)
++        quat = self._select(self.ref_body_quat_future_w)
++        return np.concatenate([pos, quat], -1).reshape(-1).astype(np.float32)
+diff --git a/sim2real/sim_env/integrated_sim2sim.py b/sim2real/sim_env/integrated_sim2sim.py
+index 7a4d85d..fcf9afb 100644
+--- a/sim2real/sim_env/integrated_sim2sim.py
++++ b/sim2real/sim_env/integrated_sim2sim.py
+@@ -53,6 +53,17 @@ TRACKING_BODY_PATTERNS = (
+ )
+ TERMINATION_ROOT_BODY_NAME = "torso_link"
+ ANCHOR_BODY_NAME = "pelvis"
++# RoboParty RP1 counterparts (same as scripts/tracking_experiment/compute_tracking_metrics.py BODY_SETS["rp1"])
++RP1_TRACKING_BODY_PATTERNS = (
++    "base_link",
++    "waist_yaw_link",
++    ".*_hip_yaw_link",
++    ".*_knee_link",
++    ".*_ankle_roll_link",
++    ".*_shoulder_yaw_link",
++    ".*_elbow_link",
++    ".*_wrist_pitch_link",
++)
+ _URI_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+ 
+ 
+@@ -1122,9 +1133,13 @@ class IntegratedSim2Sim:
+             return
+         assert self._trajectory_body_names is not None
+         names = self._trajectory_body_names
+-        tracking_indices = self._indices_for_patterns(names, TRACKING_BODY_PATTERNS)
+-        root_idx = names.index(TERMINATION_ROOT_BODY_NAME)
+-        anchor_idx = names.index(ANCHOR_BODY_NAME)
++        if "pelvis" not in names and "waist_yaw_link" in names:
++            patterns, root_name, anchor_name = RP1_TRACKING_BODY_PATTERNS, "waist_yaw_link", "base_link"
++        else:
++            patterns, root_name, anchor_name = TRACKING_BODY_PATTERNS, TERMINATION_ROOT_BODY_NAME, ANCHOR_BODY_NAME
++        tracking_indices = self._indices_for_patterns(names, patterns)
++        root_idx = names.index(root_name)
++        anchor_idx = names.index(anchor_name)
+ 
+         robot_pos_local, robot_quat_local = self._local_tracking_state(
+             robot_body_pos_w,

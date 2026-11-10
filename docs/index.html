@@ -490,10 +490,14 @@
 <p>Instructions for data, training, export and evaluation are in the
   <a href="https://github.com/Roboparty/PartyMimic#readme">README</a>.</p>
 <ul>
-  <li>Default (MLP): <code>bash scripts/train.sh logs/g1 --robot g1mj --motion_dir &lt;npz clips&gt;</code></li>
+  <li>Data, from public datasets only: <code>tools/data/build_library.sh g1</code> (LAFAN1, the BONES-SEED diversity
+    subset, KungfuAthlete and the Extreme test set), then <code>rp1</code> for the RP1 retargets.</li>
+  <li>Default (MLP): <code>bash scripts/train.sh logs/g1 --robot g1mj --motion_dir data/motions/g1_mix</code></li>
   <li>Attention encoder: add <code>--ref_enc xattn</code> (24 GB cards: also <code>--pi_batch 1024</code>).</li>
   <li>Sparse keypoints: add <code>--interface sparse5</code>; export with <code>tools/export_deploy_onnx.py</code>.</li>
   <li>Two GPUs: add <code>--pipeline</code>. Fine-tune on a few clips before deployment: <code>--init &lt;run&gt;/last.pt</code>.</li>
+  <li>Trained checkpoints (MLP, joint references): <code>checkpoints/g1_mlp.pt</code> and <code>checkpoints/rp1_mlp.pt</code>.</li>
+  <li>Diversity analysis of a library: <code>tools/diversity/analyze.py</code>.</li>
 </ul>
 
 <footer>
