@@ -58,16 +58,19 @@
   .card i { display: block; font-style: normal; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase;
             font-weight: 700; color: var(--ink); margin-bottom: 2px; }
   .wide video { width: 100%; border-radius: 8px; display: block; background: #000; }
+  .card em.gpu { display: inline-block; vertical-align: middle; margin-left: 6px; padding: 2px 8px; border-radius: 6px;
+                 font-size: .78rem; font-style: normal; font-weight: 700; color: #fff; background: #76b900; }
+  .pills span.hot { background: #76b900; color: #fff; border-color: #76b900; font-weight: 700; }
 </style>
 </head>
 <body>
 <header>
   <h1><span>Party</span>Mimic</h1>
   <p class="tagline">One whole-body tracking policy for <b>41 hours of diverse motion</b>, <b>trained in
-    26 minutes on a single RTX 4090</b>. On five held-out test sets, from walking to <b>extreme martial
+    26 minutes on a single 24 GB RTX 4090</b>. On five held-out test sets, from walking to <b>extreme martial
     arts</b>, it has the <b>lowest mean tracking error</b> of every method we compared, on two humanoids, with an MLP
     or an attention network, from full joint references or from <b>five keypoints</b>.</p>
-  <div class="pills"><span>1&times; RTX 4090 &middot; 26 min</span><span>41 h of motion</span>
+  <div class="pills"><span class="hot">26 min on 1&times; RTX 4090 (24 GB)</span><span>41 h of motion</span>
     <span>MLP or attention</span><span>Joints or 5 keypoints</span><span>Unitree G1 &middot; RoboParty RP1</span></div>
   <div class="links"><a href="https://github.com/Roboparty/PartyMimic">Code</a><a href="#results">Results</a><a href="#sparse">Sparse keypoints</a>
     <a href="#videos">Videos</a><a href="#data">Data</a><a href="#speed">LAFAN speed</a><a href="#recipe">Recipe</a><a href="#supermimic">SuperMimic ablation</a></div>
@@ -75,11 +78,11 @@
 <main>
 
 <div class="cards six">
-  <div class="card"><i>Fast</i><b>26 min</b><span>on one RTX 4090 for the full library, G1 and RP1
-    alike (attention: 41 min). The other methods took 50&ndash;120 min.</span></div>
-  <div class="card"><i>Precise</i><b>&minus;25%</b><span>mean error against the best
-    other method on G1 (45.1 vs 59.9 mm), &minus;21% on RP1;
-    attention: &minus;27% / &minus;26%.</span></div>
+  <div class="card"><i>Fast</i><b>26 min <em class="gpu">RTX 4090 &middot; 24 GB</em></b><span>on one
+    consumer GPU for the full library, G1 and RP1 alike (attention: 41 min). The other methods took 50&ndash;120 min.</span></div>
+  <div class="card"><i>Precise</i><b>20.5 mm</b><span>body error on held-out manipulation, G1;
+    the best other method: 28.2 mm (Mimic Lite, &minus;27%).
+    RP1: 16.5 vs 27.3 mm (&minus;40%).</span></div>
   <div class="card"><i>Generalizes</i><b>5 held-out sets</b><span>Loco, Mani, Dance, Ground and 308 extreme martial-arts
     clips. 92% of the Dance and 85% of the Extreme windows
     have no close match in training.</span></div>
@@ -131,7 +134,8 @@
   exceeds 0.3 m or the gravity direction error exceeds 0.8. Error is the local body position error over the tracked part
   of each clip; completion is the tracked share of each clip; Mean is the mean error of the five sets. All trained methods ran 12,000 iterations (NablaMimic: its
   2-hour budget) with 2 seeds; the table gives the means. Training is the wall-clock time of 12,000 iterations on an
-  otherwise idle RTX 4090 (i9-14900K).</p>
+  otherwise idle RTX 4090 (i9-14900K). Our cards are 48 GB editions; the MLP fits the standard 24 GB card: with
+  only 24.1 GB left free, G1 and RP1 runs kept the same speed and peaked at 22.6 and 23.4 GB.</p>
 
 <h3 id="data">Training data and how new the test sets are</h3>
 <figure>
@@ -208,7 +212,7 @@
   wrists and ankles to its target. Locomotion and Dance are the median clips of their sets; Extreme is the
   martial-arts clip of the videos below.</p>
 
-<h2 id="videos">Sim2sim on held-out motions</h2>
+<h2 id="videos">Sim2sim on held-out motions: zero-shot</h2>
 <p>Rollouts from the evaluator (MuJoCo, deterministic policy, default MLP encoder, seed 0). Loco, Mani, Dance and
   Ground show the clip with the <b>median</b> error of its set. Extreme shows two <b>fast</b> clips with clean
   references, chosen by us: a 12-second fist routine (faster than 63% of the Extreme clips;
@@ -253,7 +257,7 @@
   closely as speed (0.88). RP1 shows the same pattern (fastest third:
   84% of the speed, 0.86 m/s sliding).</p>
 
-<h2 id="speed">Speed on LAFAN: like for like with XMimic and BlinkMimic</h2>
+<h2 id="speed">Speed on LAFAN: learned in 3&ndash;5 min</h2>
 <p><b>This comparison is on the LAFAN dataset</b> (LAFAN-40: the 40 G1 LAFAN1 clips, used for both training and
   evaluation), XMimic's speed benchmark, not on the held-out test sets above.
   <a href="https://github.com/nico-bohlinger/xmimic">XMimic</a> rebuilds BlinkMimic's main recipe in JAX and reports
@@ -338,7 +342,7 @@
   6,000 iterations per variant, one variant per factor). The score is the normalized evaluation return (mean of the
   last two evaluations, deterministic policy). The baseline over 3 seeds is 0.686 &plusmn; 0.048, and single-seed
   |z| &lt; 1.5 counts as noise. Δ is the change from the baseline.</p>
-<details><summary>All variants</summary>
+<details open><summary>All variants</summary>
 <div class="scroll"><table>
   <tr><th>Variant</th><th>What it tests</th><th class="n">Score</th><th class="n">&Delta;</th><th>Verdict</th></tr>
 <tr class="grp"><td colspan="5">Baseline (3 seeds)</td></tr>
