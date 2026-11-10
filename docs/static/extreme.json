@@ -1,0 +1,151 @@
+{
+ "g1": {
+  "clips": 308,
+  "lag_ms_median": 20.0,
+  "err_gain_at_lag_pct": 8.68181628031175,
+  "spearman_err_skate": 0.8488941879410239,
+  "spearman_err_speed": 0.8779694736811843,
+  "slow": {
+   "lag_ms": 20.0,
+   "err0_mm": 21.605163254554206,
+   "robot_speed_ratio": 1.2305865118555168,
+   "ref_foot_skate_mps": 0.059940116397899736,
+   "root_gap_max_m": 0.21372600183972723,
+   "ee_speed_p95": 0.7759230018662544,
+   "speed_range": [
+    0.0038640951610048957,
+    1.5741164373537682
+   ]
+  },
+  "fast": {
+   "lag_ms": 40.0,
+   "err0_mm": 76.72803918136455,
+   "robot_speed_ratio": 0.7842674954827746,
+   "ref_foot_skate_mps": 0.9802449382501268,
+   "root_gap_max_m": 1.0640143144897867,
+   "ee_speed_p95": 4.49622312050563,
+   "speed_range": [
+    2.959493295860471,
+    13.546496537500587
+   ]
+  }
+ },
+ "rp1": {
+  "clips": 308,
+  "lag_ms_median": 20.0,
+  "err_gain_at_lag_pct": 8.298709788763869,
+  "spearman_err_skate": 0.8287144372657165,
+  "spearman_err_speed": 0.8583873038507617,
+  "slow": {
+   "lag_ms": 20.0,
+   "err0_mm": 17.593595265207906,
+   "robot_speed_ratio": 1.2206509050245864,
+   "ref_foot_skate_mps": 0.05618350697632475,
+   "root_gap_max_m": 0.21835349576706678,
+   "ee_speed_p95": 0.7097173103553348,
+   "speed_range": [
+    0.006524647882492064,
+    1.5580481310244854
+   ]
+  },
+  "fast": {
+   "lag_ms": 20.0,
+   "err0_mm": 69.8164568862769,
+   "robot_speed_ratio": 0.8368447310742693,
+   "ref_foot_skate_mps": 0.8581730548080893,
+   "root_gap_max_m": 1.1273202784737741,
+   "ee_speed_p95": 4.030604882674973,
+   "speed_range": [
+    2.7760141051841325,
+    13.177919124627273
+   ]
+  }
+ },
+ "rp1sp5": {
+  "clips": 308,
+  "lag_ms_median": 20.0,
+  "err_gain_at_lag_pct": 6.9072925021802405,
+  "spearman_err_skate": 0.8010983987708317,
+  "spearman_err_speed": 0.8626015836097745,
+  "slow": {
+   "lag_ms": 20.0,
+   "err0_mm": 19.685158188014963,
+   "robot_speed_ratio": 1.2577523763894658,
+   "ref_foot_skate_mps": 0.05618350697632475,
+   "root_gap_max_m": 0.24905362033432674,
+   "ee_speed_p95": 0.7097173103553348,
+   "speed_range": [
+    0.006524647882492064,
+    1.5580481310244854
+   ]
+  },
+  "fast": {
+   "lag_ms": 20.0,
+   "err0_mm": 69.72252685179154,
+   "robot_speed_ratio": 0.8217517775302261,
+   "ref_foot_skate_mps": 0.8581730548080893,
+   "root_gap_max_m": 1.2036638770958135,
+   "ee_speed_p95": 4.030604882674973,
+   "speed_range": [
+    2.7760141051841325,
+    13.177919124627273
+   ]
+  }
+ },
+ "picked": {
+  "g1": {
+   "kf_ground_fist_231": {
+    "ee_speed_p95": 2.776665421967058,
+    "err0_mm": 38.86125953600745,
+    "root_gap_max_m": 0.2735522506810341,
+    "ref_foot_skate_mps": 0.2612460843869887,
+    "robot_speed_ratio": 0.9568584523075161,
+    "speed_pct": 62.98701298701299
+   },
+   "kf_jump_training_1462": {
+    "ee_speed_p95": 5.075962648184655,
+    "err0_mm": 50.12501107759232,
+    "root_gap_max_m": 0.5066940955498339,
+    "ref_foot_skate_mps": 0.11981386547151654,
+    "robot_speed_ratio": 0.7208012815062562,
+    "speed_pct": 86.36363636363636
+   }
+  },
+  "rp1": {
+   "kf_ground_fist_231": {
+    "ee_speed_p95": 2.4727161222406133,
+    "err0_mm": 28.227370195347962,
+    "root_gap_max_m": 0.4690330397204816,
+    "ref_foot_skate_mps": 0.25668730506143933,
+    "robot_speed_ratio": 0.9900658263959791,
+    "speed_pct": 59.74025974025974
+   },
+   "kf_jump_training_1462": {
+    "ee_speed_p95": 4.95349709194049,
+    "err0_mm": 45.082623269854054,
+    "root_gap_max_m": 0.5898373781604079,
+    "ref_foot_skate_mps": 0.2938462409587878,
+    "robot_speed_ratio": 0.7482340932560445,
+    "speed_pct": 87.33766233766234
+   }
+  },
+  "rp1sp5": {
+   "kf_ground_fist_231": {
+    "ee_speed_p95": 2.4727161222406133,
+    "err0_mm": 35.22966098139866,
+    "root_gap_max_m": 0.789300311338689,
+    "ref_foot_skate_mps": 0.25668730506143933,
+    "robot_speed_ratio": 1.0042352736479385,
+    "speed_pct": 59.74025974025974
+   },
+   "kf_jump_training_1462": {
+    "ee_speed_p95": 4.95349709194049,
+    "err0_mm": 51.464061930528466,
+    "root_gap_max_m": 1.3354636810352836,
+    "ref_foot_skate_mps": 0.2938462409587878,
+    "robot_speed_ratio": 0.6946232552756257,
+    "speed_pct": 87.33766233766234
+   }
+  }
+ }
+}

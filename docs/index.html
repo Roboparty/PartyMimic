@@ -52,21 +52,44 @@
   td small { display: block; font-size: .72rem; color: var(--mute); font-weight: 400; }
   details { margin: 12px 0; } summary { cursor: pointer; font-weight: 600; }
   .videos.three { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .cards.six { grid-template-columns: repeat(3, 1fr); }
+  .cards.six .card b { font-size: 1.45rem; }
+  @media (max-width: 720px) { .cards.six { grid-template-columns: 1fr 1fr; } }
+  .card i { display: block; font-style: normal; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase;
+            font-weight: 700; color: var(--ink); margin-bottom: 2px; }
+  .wide video { width: 100%; border-radius: 8px; display: block; background: #000; }
 </style>
 </head>
 <body>
 <header>
   <h1><span>Party</span>Mimic</h1>
-  <p class="tagline">One whole-body tracking policy for a 10,731-clip motion library, <b>trained in
-    26 minutes on a single RTX 4090</b>. On held-out locomotion, manipulation, dance, ground and
-    <b>extreme martial-arts</b> motions it has the <b>lowest mean tracking error</b> of every method we compared, on two
-    humanoids, from full joint references or from <b>five keypoints</b>.</p>
-  <div class="pills"><span>1&times; RTX 4090</span><span>MLP: 26 min &middot; attention: 41 min</span>
-    <span>G1 mean error 45.1 mm</span><span>Joint or sparse-keypoint references</span></div>
+  <p class="tagline">One whole-body tracking policy for <b>41 hours of diverse motion</b>, <b>trained in
+    26 minutes on a single RTX 4090</b>. On five held-out test sets, from walking to <b>extreme martial
+    arts</b>, it has the <b>lowest mean tracking error</b> of every method we compared, on two humanoids, with an MLP
+    or an attention network, from full joint references or from <b>five keypoints</b>.</p>
+  <div class="pills"><span>1&times; RTX 4090 &middot; 26 min</span><span>41 h of motion</span>
+    <span>MLP or attention</span><span>Joints or 5 keypoints</span><span>Unitree G1 &middot; RoboParty RP1</span></div>
   <div class="links"><a href="https://github.com/Roboparty/PartyMimic">Code</a><a href="#results">Results</a><a href="#sparse">Sparse keypoints</a>
-    <a href="#videos">Videos</a><a href="#speed">LAFAN speed</a><a href="#recipe">Recipe</a><a href="#supermimic">SuperMimic ablation</a></div>
+    <a href="#videos">Videos</a><a href="#data">Data</a><a href="#speed">LAFAN speed</a><a href="#recipe">Recipe</a><a href="#supermimic">SuperMimic ablation</a></div>
 </header>
 <main>
+
+<div class="cards six">
+  <div class="card"><i>Fast</i><b>26 min</b><span>on one RTX 4090 for the full library, G1 and RP1
+    alike (attention: 41 min). The other methods took 50&ndash;120 min.</span></div>
+  <div class="card"><i>Precise</i><b>&minus;25%</b><span>mean error against the best
+    other method on G1 (45.1 vs 59.9 mm), &minus;21% on RP1;
+    attention: &minus;27% / &minus;26%.</span></div>
+  <div class="card"><i>Generalizes</i><b>5 held-out sets</b><span>Loco, Mani, Dance, Ground and 308 extreme martial-arts
+    clips. 92% of the Dance and 85% of the Extreme windows
+    have no close match in training.</span></div>
+  <div class="card"><i>Diverse data</i><b>41 h</b><span>10,731 clips from LAFAN1, BONES-SEED, kneeling /
+    crawling and KungfuAthlete: 864 distinct motion types (<a href="#data">how measured</a>).</span></div>
+  <div class="card"><i>Two networks</i><b>MLP | attention</b><span>the MLP is the fastest and fits a 24 GB card; the
+    attention encoder is the most precise (G1 43.5 mm).</span></div>
+  <div class="card"><i>Two inputs</i><b>joints | 5 keypoints</b><span>from only pelvis, head, wrist and ankle poses, RP1
+    reaches 48.7 mm, below every baseline given the full joint reference (60.4 mm).</span></div>
+</div>
 
 <figure>
   <img src="static/hero.png" alt="Mean held-out body position error against training GPU-hours for every method">
@@ -75,17 +98,6 @@
     other methods were trained by us on the same data and GPU; SONIC and Mimic Lite v1.1 are the official policies,
     evaluated as released (G1 only).</figcaption>
 </figure>
-
-<div class="cards">
-  <div class="card"><b>45.1 mm</b><span>G1 mean error with the default MLP after 26 min; best other method
-    59.9 mm (NablaMimic, 120 min), SONIC 58.4 mm</span></div>
-  <div class="card"><b>62.0 mm</b><span>G1 error on 308 held-out extreme martial-arts clips, 98% completed;
-    best other method 81.4 mm</span></div>
-  <div class="card"><b>47.8 mm</b><span>RP1 mean error, same recipe, no tuning; best other method 60.4 mm
-    (BlinkMimic)</span></div>
-  <div class="card"><b>48.7 mm</b><span>RP1 mean error from five keypoints, no joint angles; 47.8 mm
-    from joint references, best other method 60.4 mm</span></div>
-</div>
 
 <h2 id="results">Results on held-out motions</h2>
 <p>Every method is trained on the same <b>10,731 clips</b>: LAFAN1, a 10k diversity subset of BONES-SEED, 56 kneeling and
@@ -121,6 +133,25 @@
   2-hour budget) with 2 seeds; the table gives the means. Training is the wall-clock time of 12,000 iterations on an
   otherwise idle RTX 4090 (i9-14900K).</p>
 
+<h3 id="data">Training data and how new the test sets are</h3>
+<figure>
+  <img src="static/data.png" alt="t-SNE map of the training windows by source, and the share of test windows close to the training data">
+  <figcaption>Left: the 1-s windows of the training library (a sample per source), embedded with t-SNE. Right: the share
+    of each test set's windows that have a close training window, as the sources are added.</figcaption>
+</figure>
+<p>We describe every 1-s window by heading-invariant root, joint and hand / foot kinematics, project to 32 dimensions
+  and cluster the 41 h into 2,000 motion clusters. The library spans <b>864 distinct
+  motion types</b> (the exponential of the cluster entropy): LAFAN1 alone 548,
+  BONES-SEED adds 249, kneeling / crawling
+  11 and KungfuAthlete, with only
+  1.3 h, 56. A test window
+  counts as covered when a training window lies within the median distance between windows of different training
+  sources. Only 47% of Loco, 57% of Mani,
+  8% of Dance, 46% of Ground and
+  15% of Extreme windows are covered: most test motion is new to every method.
+  KungfuAthlete training clips raise the Extreme coverage from 7% to
+  15%.</p>
+
 <h3 id="encoders">MLP or attention</h3>
 <p>The attention encoder lets a causal Transformer over the observation history query the goal frames, so the
   robot's own dynamics shape how it reads the reference. It lowers the G1 error on Ground by
@@ -135,11 +166,16 @@
   <tr class="ours"><td>Attention</td><td class="n">41 min</td><td class="n">42 min</td><td class="n">43.5 mm</td><td class="n">44.6 mm</td><td>&gt; 24 GB (or <code>--pi_batch 1024</code>)</td></tr>
 </table></div>
 
-<h2 id="sparse">Sparse keypoint references</h2>
-<p>With <code>--interface sparse5</code> the policy gets <b>no joint angles</b> of the reference. Each goal frame is
-  only the pelvis pose and the poses of five keypoints: the head and both wrists and ankles. That is what a
-  motion-capture suit, a VR tracker set or a video pose estimator delivers, so the robot can follow such a source
-  without a joint-space retarget in the loop. Three additions make it nearly as accurate as joint references:</p>
+<h2 id="sparse">Sparse keypoints: one command for any body</h2>
+<p>With <code>--interface sparse5</code> the command is <b>six poses per frame</b>: the pelvis pose, the head
+  orientation and the poses of both wrists and both ankles, 51 numbers and <b>no joint angles</b>. Any body with a pelvis,
+  a head, two hands and two feet can be written this way: a person in a motion-capture suit, a VR tracker set, a video
+  pose estimate, or another robot. The command does not depend on a robot's joint layout.</p>
+<div class="wide"><video src="static/videos/kp_interface.mp4" poster="static/videos/kp_interface.png" autoplay muted loop playsinline controls preload="metadata"></video></div>
+<p class="note">The same LAFAN1 motion as captured from a person and retargeted to Unitree G1 and RoboParty RP1, each
+  written as the same six keypoint poses (spheres, with their orientation axes). The person's axes are aligned to G1's
+  at the first frame.</p>
+<p>Three additions let the policy follow such a command nearly as well as full joint references:</p>
 <ul class="tight">
   <li>The observation adds the robot's own keypoint errors, from forward kinematics of its joint encoders.</li>
   <li>A keypoint-to-joint network, fit to the motion library and frozen, estimates the reference pose for the
@@ -148,12 +184,10 @@
 </ul>
 <p>On RP1 the mean whole-body error over the five sets is 48.7 mm from keypoints against
   47.8 mm from joint references with the MLP (47.8 vs 44.6 mm with attention),
-  still below every baseline that sees the full joint reference (best: 60.4 mm). The keypoints
-  themselves are tracked within 2 mm
-  of joint references on Loco/Mani and Dance, with about half the error of the baselines. On Ground and Extreme the gap
-  depends on the encoder: lying, kneeling and flipping poses are less determined by five keypoints.
-  <code>tools/export_deploy_onnx.py</code> exports the policy with a keypoint input (<code>ref_kp</code>) and a
-  deployment YAML.</p>
+  below every baseline that sees the full joint reference (best: 60.4 mm). The keypoints themselves are
+  tracked within 2 mm
+  of joint references on Loco/Mani and Dance, with about half the error of the baselines. <code>tools/export_deploy_onnx.py</code>
+  exports the policy with a keypoint input (<code>ref_kp</code>) and a deployment YAML.</p>
 <div class="scroll"><table>
   <tr><th>Reference</th><th>Encoder</th><th class="n">Loco/Mani</th><th class="n">Dance</th><th class="n">Ground</th><th class="n">Extreme</th><th class="n">Extreme, whole body</th></tr>
   <tr class="robot"><td colspan="7">RoboParty RP1 &middot; wrist and ankle position error (mm, relative to the own pelvis heading)</td></tr>
@@ -165,24 +199,29 @@
   <tr class="ref"><td>Joint</td><td>XMimic</td><td class="n">42.3</td><td class="n">70.3</td><td class="n">143.1</td><td class="n">119.0</td><td class="n">79.5<small>98%</small></td></tr>
 </table></div>
 <div class="videos three">
-  <div><video src="static/videos/rp1_sp5_locomotion.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Sparse keypoints: locomotion</div>
-  <div><video src="static/videos/rp1_sp5_dance.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Sparse keypoints: dance</div>
-  <div><video src="static/videos/rp1_sp5_extreme.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Sparse keypoints: extreme martial arts</div>
+  <div><video src="static/videos/rp1_sp5_locomotion.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Locomotion</div>
+  <div><video src="static/videos/rp1_sp5_dance.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Dance</div>
+  <div><video src="static/videos/rp1_sp5_extreme.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Extreme: martial arts</div>
 </div>
+<p class="note">The RP1 sparse-keypoint policy (MLP, seed 0) in sim2sim. Only its command is drawn: the six target poses,
+  placed in the robot's own pelvis heading frame as the policy reads them, and a red line from each of the robot's
+  wrists and ankles to its target. Locomotion and Dance are the median clips of their sets; Extreme is the
+  martial-arts clip of the videos below.</p>
 
 <h2 id="videos">Sim2sim on held-out motions</h2>
-<p>Rollouts from the evaluator (MuJoCo, deterministic policy, default MLP encoder, seed 0) on the five held-out sets.
-  Each video is the clip with the <b>median</b> error of its set (Extreme: of its clips of at least 4 s for martial
-  arts and 2 s for jumps), so these clips are typical rather than the best ones. The robot is solid, the reference a
-  blue ghost, both at their global poses.</p>
+<p>Rollouts from the evaluator (MuJoCo, deterministic policy, default MLP encoder, seed 0). Loco, Mani, Dance and
+  Ground show the clip with the <b>median</b> error of its set. Extreme shows two <b>fast</b> clips with clean
+  references, chosen by us: a 12-second fist routine (faster than 63% of the Extreme clips;
+  error 39 mm) and a jump (faster than 86%;
+  50 mm). The robot is solid, the reference a blue ghost, both at their global poses.</p>
 <div class="vrow">Unitree G1</div>
 <div class="videos three">
   <div><video src="static/videos/g1_locomotion.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Locomotion</div>
   <div><video src="static/videos/g1_manipulation.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Manipulation</div>
   <div><video src="static/videos/g1_dance.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Dance</div>
   <div><video src="static/videos/g1_ground.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Ground</div>
-  <div><video src="static/videos/g1_extreme.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Extreme: martial arts</div>
-  <div><video src="static/videos/g1_extreme_jump.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Extreme: jumps</div>
+  <div><video src="static/videos/g1_extreme.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Extreme: martial arts (fast, chosen)</div>
+  <div><video src="static/videos/g1_extreme_jump.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Extreme: jump (fast, chosen)</div>
 </div>
 <div class="vrow">RoboParty RP1</div>
 <div class="videos three">
@@ -190,9 +229,29 @@
   <div><video src="static/videos/rp1_manipulation.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Manipulation</div>
   <div><video src="static/videos/rp1_dance.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Dance</div>
   <div><video src="static/videos/rp1_ground.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Ground</div>
-  <div><video src="static/videos/rp1_extreme.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Extreme: martial arts</div>
-  <div><video src="static/videos/rp1_extreme_jump.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Extreme: jumps</div>
+  <div><video src="static/videos/rp1_extreme.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Extreme: martial arts (fast, chosen)</div>
+  <div><video src="static/videos/rp1_extreme_jump.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Extreme: jump (fast, chosen)</div>
 </div>
+
+<h3 id="fast">Why the fast Extreme clips are harder</h3>
+<p>The Extreme references are estimated from monocular video. We split the 308 clips into thirds by reference speed
+  (95th percentile of the wrist and ankle speed) and measured every G1 rollout:</p>
+<div class="scroll"><table>
+  <tr><th>G1, Extreme</th><th class="n">Slowest third</th><th class="n">Fastest third</th></tr>
+  <tr><td>Reference wrist / ankle speed</td><td class="n">0.8 m/s</td><td class="n">4.5 m/s</td></tr>
+  <tr><td>Body position error</td><td class="n">22 mm</td><td class="n">77 mm</td></tr>
+  <tr><td>Robot behind the reference</td><td class="n">20 ms</td><td class="n">40 ms</td></tr>
+  <tr><td>Reference foot sliding while on the ground</td><td class="n">0.06 m/s</td><td class="n">0.98 m/s</td></tr>
+  <tr><td>Largest gap between robot and reference root</td><td class="n">0.2 m</td><td class="n">1.1 m</td></tr>
+</table></div>
+<p>The robot is not late: it trails by one or two control steps, and shifting the reference by that much lowers the error
+  by only 9%. Two other things grow with speed. In the fast clips the reference's feet
+  slide over the ground at about 1 m/s while in contact, an artifact of the video
+  estimate; the robot plants its feet, so its position drifts away from the reference and the ghost runs off. And the
+  fastest swings exceed what the actuators deliver: the robot reaches 78% of the
+  reference speed. Over all clips the error follows foot sliding (rank correlation 0.85) about as
+  closely as speed (0.88). RP1 shows the same pattern (fastest third:
+  84% of the speed, 0.86 m/s sliding).</p>
 
 <h2 id="speed">Speed on LAFAN: like for like with XMimic and BlinkMimic</h2>
 <p><b>This comparison is on the LAFAN dataset</b> (LAFAN-40: the 40 G1 LAFAN1 clips, used for both training and
