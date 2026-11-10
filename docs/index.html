@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PartyMimic: general humanoid motion tracking in minutes on one GPU</title>
-<meta name="description" content="One whole-body tracking policy for a 9k-clip motion library, trained in 7-30 minutes on one RTX 4090 with a differentiable world model; state-of-the-art held-out tracking error on Unitree G1 and RoboParty RP1.">
+<meta name="description" content="One whole-body tracking policy for a 10.7k-clip motion library, trained in about half an hour on one RTX 4090 with a differentiable world model; lowest mean held-out tracking error on locomotion, manipulation, dance, ground and extreme martial-arts motions, on Unitree G1 and RoboParty RP1, from joint or sparse keypoint references.">
 <style>
   :root { --red: #c62828; --ink: #1d1d1f; --mute: #6b6b70; --line: #e3e3e8; --bg2: #f6f7f9; }
   * { box-sizing: border-box; }
@@ -49,110 +49,158 @@
   ul.tight li { margin: 4px 0; }
   .math { font-family: "Times New Roman", serif; font-style: italic; }
   footer { margin-top: 56px; font-size: .82rem; color: var(--mute); }
+  td small { display: block; font-size: .72rem; color: var(--mute); font-weight: 400; }
+  details { margin: 12px 0; } summary { cursor: pointer; font-weight: 600; }
+  .videos.three { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
 </style>
 </head>
 <body>
 <header>
   <h1><span>Party</span>Mimic</h1>
-  <p class="tagline">One whole-body tracking policy for a 9,173-clip motion library on a <b>single RTX 4090</b>:
-    <b>trained in 7&ndash;30 minutes</b>, the <b>lowest tracking error</b> of every method we compared, and it
-    <b>generalizes</b> to held-out and high-dynamic motions it never saw, on two humanoids.</p>
-  <div class="pills"><span>1&times; RTX 4090 &middot; 22 GB</span><span>Fast: 7&ndash;30 min</span>
-    <span>Precise: 23.6 mm on G1</span><span>Generalizes: held-out + zero-shot</span></div>
-  <div class="links"><a href="https://github.com/Roboparty/PartyMimic">Code</a><a href="#results">Held-out results</a><a href="#videos">Videos</a>
-    <a href="#highdyn">High-dynamic</a><a href="#speed">LAFAN speed</a><a href="#recipe">Recipe</a><a href="#supermimic">SuperMimic ablation</a></div>
+  <p class="tagline">One whole-body tracking policy for a 10,731-clip motion library, <b>trained in
+    26 minutes on a single RTX 4090</b>. On held-out locomotion, manipulation, dance, ground and
+    <b>extreme martial-arts</b> motions it has the <b>lowest mean tracking error</b> of every method we compared, on two
+    humanoids, from full joint references or from <b>five keypoints</b>.</p>
+  <div class="pills"><span>1&times; RTX 4090</span><span>MLP: 26 min &middot; attention: 41 min</span>
+    <span>G1 mean error 45.1 mm</span><span>Joint or sparse-keypoint references</span></div>
+  <div class="links"><a href="https://github.com/Roboparty/PartyMimic">Code</a><a href="#results">Results</a><a href="#sparse">Sparse keypoints</a>
+    <a href="#videos">Videos</a><a href="#speed">LAFAN speed</a><a href="#recipe">Recipe</a><a href="#supermimic">SuperMimic ablation</a></div>
 </header>
 <main>
 
 <figure>
-  <img src="static/hero.png" alt="Loc/Man body position error against training GPU-hours for every method">
-  <figcaption>Held-out locomotion and manipulation body position error (lower is better) against training compute.
-    Stars mark PartyMimic at 2,000 and 12,000 iterations (2-seed means). The other trained methods are shown at their
-    reported budgets, all trained by us on one RTX 4090. SONIC and Mimic Lite v1.1 are official leaderboard entries
-    and only exist for G1.</figcaption>
+  <img src="static/hero.png" alt="Mean held-out body position error against training GPU-hours for every method">
+  <figcaption>Mean body position error over the five held-out test sets (lower is better) against training compute.
+    PartyMimic with the default MLP and with the attention reference encoder, 2-seed means at 12,000 iterations. The
+    other methods were trained by us on the same data and GPU; SONIC and Mimic Lite v1.1 are the official policies,
+    evaluated as released (G1 only).</figcaption>
 </figure>
 
 <div class="cards">
-  <div class="card"><b>6.7 min</b><span>for G1 to beat every compared method on Loc/Man error (26.2 mm vs 26.7 mm for Mimic Lite v1.1, which used 50 GPU-h)</span></div>
-  <div class="card"><b>21 min</b><span>for G1 to reach best-in-comparison Loc/Man, Ground and Dance errors at once, with &ge; 90% completion on every split</span></div>
-  <div class="card"><b>23.6 mm</b><span>G1 Loc/Man error after 30 min; SONIC's is 37.1 mm after 21,000 GPU-h</span></div>
-  <div class="card"><b>20.0 mm</b><span>RP1 Loc/Man error after 31 min with the same recipe, no tuning (BlinkMimic: 30.7 mm after 68 min)</span></div>
+  <div class="card"><b>45.1 mm</b><span>G1 mean error with the default MLP after 26 min; best other method
+    59.9 mm (NablaMimic, 120 min), SONIC 58.4 mm</span></div>
+  <div class="card"><b>62.0 mm</b><span>G1 error on 308 held-out extreme martial-arts clips, 98% completed;
+    best other method 81.4 mm</span></div>
+  <div class="card"><b>47.8 mm</b><span>RP1 mean error, same recipe, no tuning; best other method 60.4 mm
+    (BlinkMimic)</span></div>
+  <div class="card"><b>48.7 mm</b><span>RP1 mean error from five keypoints, no joint angles; 47.8 mm
+    from joint references, best other method 60.4 mm</span></div>
 </div>
 
 <h2 id="results">Results on held-out motions</h2>
-<p><b>Every number in this section is measured on held-out motions</b>: MotionDecode test splits from a different
-  mocap source than the training library. PartyMimic is BlinkMimic's
-  model-based learner (SuperMimic: an online MLP world model, 32-step BPTT through it, and a critic) with a recipe
-  built for generalization and speed.</p>
+<p>Every method is trained on the same <b>10,731 clips</b>: LAFAN1, a 10k diversity subset of BONES-SEED, 56 kneeling and
+  crawling clips of our own, and 635 KungFuAthlete clips. It is tested on <b>five held-out sets</b>: Loco (80 clips),
+  Mani (48), Dance (40) and Ground (60) from MotionDecode, a different motion-capture source, and <b>Extreme</b> (308):
+  KungFuAthlete martial arts, jumps and flips, held out by whole source video. RP1 uses the same motions retargeted to
+  RP1. PartyMimic comes with two reference encoders: an <b>MLP</b> (default) and a cross-attention encoder
+  (<b>attention</b>, <code>--ref_enc xattn</code>).</p>
 <div class="scroll"><table>
-  <tr><th>Method</th><th class="n">Training</th><th class="n">Loc/Man</th><th class="n">Loc</th><th class="n">Man</th>
-      <th class="n">Dance</th><th class="n">Ground</th></tr>
-  <tr class="robot"><td colspan="7">Unitree G1 &middot; body position error (mm, lower is better)</td></tr>
-  <tr class="ref"><td>SONIC (NVIDIA GEAR, official)</td><td class="n">21,000 GPU-h</td><td class="n">37.1</td><td class="n">28.7</td><td class="n">45.5</td><td class="n">48.7</td><td class="n">80.3</td></tr>
-  <tr class="ref"><td>Mimic Lite v1.1 (official)</td><td class="n">50 GPU-h</td><td class="n">26.7</td><td class="n">25.1</td><td class="n">28.2</td><td class="n">43.1</td><td class="n">144.7</td></tr>
-  <tr><td>SuperMimic (paper hyperparameters)</td><td class="n">52 min</td><td class="n">40.2</td><td class="n">40.5</td><td class="n">39.8</td><td class="n">64.3</td><td class="n">167.8</td></tr>
-  <tr><td>NablaMimic (official config)</td><td class="n">99 min</td><td class="n">29.8</td><td class="n">32.2</td><td class="n">27.3</td><td class="n">46.8</td><td class="n">110.6</td></tr>
-  <tr><td>BlinkMimic (main preset)</td><td class="n">59 min</td><td class="n">31.0</td><td class="n">31.9</td><td class="n">30.1</td><td class="n">53.8</td><td class="n">98.7</td></tr>
-  <tr><td>XMimic (BlinkMimic main in JAX, 1 GPU)</td><td class="n">50 min</td><td class="n">30.9</td><td class="n">31.8</td><td class="n">30.0</td><td class="n">53.7</td><td class="n">101.0</td></tr>
-  <tr class="ours"><td>PartyMimic, 2,000 iterations</td><td class="n">6.7 min</td><td class="n">26.2</td><td class="n">29.3</td><td class="n">23.1</td><td class="n">43.1</td><td class="n">84.2</td></tr>
-  <tr class="ours"><td>PartyMimic, 8,000 iterations</td><td class="n">21 min</td><td class="n">23.7</td><td class="n">26.1</td><td class="n">21.3</td><td class="n">38.2</td><td class="n">77.5</td></tr>
-  <tr class="ours"><td>PartyMimic, 12,000 iterations</td><td class="n">30 min</td><td class="n">23.6</td><td class="n">25.5</td><td class="n">21.6</td><td class="n">38.1</td><td class="n">74.3</td></tr>
-  <tr class="robot"><td colspan="7">RoboParty RP1 &middot; body position error (mm, lower is better)</td></tr>
-  <tr><td>SuperMimic (paper hyperparameters)</td><td class="n">149 min</td><td class="n">35.0</td><td class="n">39.9</td><td class="n">30.2</td><td class="n">56.4</td><td class="n">158.4</td></tr>
-  <tr><td>BlinkMimic (main preset)</td><td class="n">68 min</td><td class="n">30.7</td><td class="n">32.2</td><td class="n">29.1</td><td class="n">51.7</td><td class="n">126.0</td></tr>
-  <tr><td>XMimic (BlinkMimic main in JAX, 1 GPU)</td><td class="n">59 min</td><td class="n">30.6</td><td class="n">33.4</td><td class="n">27.9</td><td class="n">52.8</td><td class="n">126.7</td></tr>
-  <tr class="ours"><td>PartyMimic, 2,000 iterations</td><td class="n">8.0 min</td><td class="n">21.2</td><td class="n">24.6</td><td class="n">17.8</td><td class="n">39.9</td><td class="n">115.7</td></tr>
-  <tr class="ours"><td>PartyMimic, 8,000 iterations</td><td class="n">22 min</td><td class="n">20.1</td><td class="n">23.5</td><td class="n">16.8</td><td class="n">36.5</td><td class="n">101.8</td></tr>
-  <tr class="ours"><td>PartyMimic, 12,000 iterations</td><td class="n">31 min</td><td class="n">20.0</td><td class="n">23.6</td><td class="n">16.5</td><td class="n">35.9</td><td class="n">103.6</td></tr>
+  <tr><th>Method</th><th class="n">Training</th><th class="n">Mean</th><th class="n">Loco</th><th class="n">Mani</th><th class="n">Dance</th><th class="n">Ground</th><th class="n">Extreme</th></tr>
+  <tr class="robot"><td colspan="8">Unitree G1 &middot; body position error (mm, lower is better), completion below</td></tr>
+  <tr class="ref"><td>SONIC (NVIDIA GEAR, official)</td><td class="n">21,000 GPU-h</td><td class="n"><b>58.4</b></td><td class="n">28.7<small>100%</small></td><td class="n">45.5<small>100%</small></td><td class="n">48.7<small>99%</small></td><td class="n">80.3<small>86%</small></td><td class="n">88.7<small>88%</small></td></tr>
+  <tr class="ref"><td>Mimic Lite v1.1 (official)</td><td class="n">50 GPU-h</td><td class="n"><b>67.5</b></td><td class="n">25.0<small>99%</small></td><td class="n">28.2<small>94%</small></td><td class="n">43.3<small>55%</small></td><td class="n">145.2<small>66%</small></td><td class="n">95.7<small>74%</small></td></tr>
+  <tr><td>SuperMimic (paper hyperparameters)</td><td class="n">52 min</td><td class="n"><b>67.9</b></td><td class="n">34.9<small>100%</small></td><td class="n">34.3<small>100%</small></td><td class="n">55.5<small>97%</small></td><td class="n">119.2<small>82%</small></td><td class="n">95.5<small>93%</small></td></tr>
+  <tr><td>NablaMimic (official config, 2 h)</td><td class="n">120 min</td><td class="n"><b>59.9</b></td><td class="n">32.9<small>99%</small></td><td class="n">30.3<small>100%</small></td><td class="n">46.9<small>89%</small></td><td class="n">107.8<small>81%</small></td><td class="n">81.6<small>96%</small></td></tr>
+  <tr><td>BlinkMimic (main preset)</td><td class="n">59 min</td><td class="n"><b>59.9</b></td><td class="n">32.9<small>100%</small></td><td class="n">30.9<small>100%</small></td><td class="n">54.1<small>97%</small></td><td class="n">100.1<small>89%</small></td><td class="n">81.4<small>97%</small></td></tr>
+  <tr><td>XMimic (BlinkMimic main in JAX)</td><td class="n">50 min</td><td class="n"><b>60.2</b></td><td class="n">32.3<small>100%</small></td><td class="n">30.6<small>100%</small></td><td class="n">53.5<small>98%</small></td><td class="n">101.3<small>90%</small></td><td class="n">83.1<small>97%</small></td></tr>
+  <tr class="ours"><td>PartyMimic, MLP (default)</td><td class="n">26 min</td><td class="n"><b>45.1</b></td><td class="n">25.7<small>100%</small></td><td class="n">20.5<small>99%</small></td><td class="n">36.8<small>97%</small></td><td class="n">80.6<small>94%</small></td><td class="n">62.0<small>98%</small></td></tr>
+  <tr class="ours"><td>PartyMimic, attention</td><td class="n">41 min</td><td class="n"><b>43.5</b></td><td class="n">25.1<small>100%</small></td><td class="n">21.1<small>99%</small></td><td class="n">35.0<small>98%</small></td><td class="n">76.2<small>93%</small></td><td class="n">60.3<small>98%</small></td></tr>
+  <tr class="robot"><td colspan="8">RoboParty RP1 &middot; body position error (mm, lower is better), completion below</td></tr>
+  <tr><td>SuperMimic (paper hyperparameters)</td><td class="n">149 min</td><td class="n"><b>74.0</b></td><td class="n">34.8<small>100%</small></td><td class="n">29.1<small>100%</small></td><td class="n">53.4<small>99%</small></td><td class="n">162.5<small>76%</small></td><td class="n">90.2<small>94%</small></td></tr>
+  <tr><td>BlinkMimic (main preset)</td><td class="n">68 min</td><td class="n"><b>60.4</b></td><td class="n">33.7<small>100%</small></td><td class="n">27.3<small>100%</small></td><td class="n">50.3<small>96%</small></td><td class="n">110.5<small>91%</small></td><td class="n">80.3<small>98%</small></td></tr>
+  <tr><td>XMimic (BlinkMimic main in JAX)</td><td class="n">59 min</td><td class="n"><b>62.7</b></td><td class="n">33.8<small>100%</small></td><td class="n">29.1<small>100%</small></td><td class="n">49.7<small>96%</small></td><td class="n">121.3<small>88%</small></td><td class="n">79.5<small>98%</small></td></tr>
+  <tr class="ours"><td>PartyMimic, MLP (default)</td><td class="n">26 min</td><td class="n"><b>47.8</b></td><td class="n">23.4<small>100%</small></td><td class="n">16.5<small>100%</small></td><td class="n">35.3<small>96%</small></td><td class="n">105.1<small>88%</small></td><td class="n">58.9<small>99%</small></td></tr>
+  <tr class="ours"><td>PartyMimic, attention</td><td class="n">42 min</td><td class="n"><b>44.6</b></td><td class="n">22.9<small>100%</small></td><td class="n">16.1<small>100%</small></td><td class="n">33.4<small>98%</small></td><td class="n">94.3<small>90%</small></td><td class="n">56.2<small>98%</small></td></tr>
+  <tr class="ours"><td>PartyMimic, sparse keypoints, MLP</td><td class="n">29 min</td><td class="n"><b>48.7</b></td><td class="n">24.7<small>100%</small></td><td class="n">19.1<small>100%</small></td><td class="n">38.3<small>99%</small></td><td class="n">100.9<small>90%</small></td><td class="n">60.7<small>98%</small></td></tr>
+  <tr class="ours"><td>PartyMimic, sparse keypoints, attention</td><td class="n">46 min</td><td class="n"><b>47.8</b></td><td class="n">24.1<small>100%</small></td><td class="n">18.2<small>100%</small></td><td class="n">36.8<small>97%</small></td><td class="n">100.0<small>90%</small></td><td class="n">60.1<small>98%</small></td></tr>
 </table></div>
-<p class="note"><b>How these numbers were obtained.</b>
-  Every trained method (SuperMimic, NablaMimic, BlinkMimic, XMimic, PartyMimic) was trained by us on the same machine. Each
-  run had one NVIDIA RTX 4090 (48 GB) to itself, with an i9-14900K, CUDA 12.8 and PyTorch 2.9 (XMimic: JAX 0.7.2).
-  All methods used the same 9,173-clip training set: 9,133 BONES-SEED clips retargeted to G1 plus LAFAN1, 21.1 h at 50 Hz.
-  RP1 used the same motions retargeted to RP1.
-  Training time is the wall-clock time of training on one GPU, excluding export and evaluation.
-  All checkpoints were exported to ONNX and scored by the same evaluator: the
-  <a href="https://egalahad.github.io/sim2real/leaderboard/">sim2real leaderboard</a> MuJoCo CPU sim2sim harness
-  (seed 0, every clip played from start to end, failure when the pelvis height error exceeds 0.3 m or the gravity
-  direction error exceeds 0.8).
-  The test sets are the four MotionDecode splits: Loc-80, Man-48, Dance-40 and Ground-60. They come from a different
-  motion-capture source with no overlap with the training data: no 1-s joint window of the 228 test clips lies within
-  0.059 rad RMS of any training window.
-  The table reports the local body position error. Loc/Man is the mean of the Loc and Man errors.
-  PartyMimic rows are 2-seed means; seeds differ by 0.1&ndash;1.4 mm on Loc/Man and by 5&ndash;13 mm on Ground.
-  Completion rates are given in the <a href="#completion">next table</a>.
-  XMimic ships only the G1 scene and LAFAN1 CSV clips; we added an npz clip loader and exported the G1 and RP1 scenes
-  from BlinkMimic with XMimic's own export tool (every model array matches mjlab's), and ran its defaults with BlinkMimic's
-  12,000 iterations and constraint capacity (<code>--njmax 500</code>). Its time includes its ahead-of-time compilation.
-  SONIC and Mimic Lite v1.1 are the official leaderboard entries: different data and hardware, so their GPU-hours
-  only indicate scale. They have no RP1 entries, and NablaMimic has no RP1 model.</p>
+<p class="note">Scored by the <a href="https://egalahad.github.io/sim2real/leaderboard/">sim2real leaderboard</a>
+  MuJoCo sim2sim evaluator after ONNX export: every clip played from start to end, failure when the pelvis height error
+  exceeds 0.3 m or the gravity direction error exceeds 0.8. Error is the local body position error over the tracked part
+  of each clip; completion is the tracked share of each clip; Mean is the mean error of the five sets. All trained methods ran 12,000 iterations (NablaMimic: its
+  2-hour budget) with 2 seeds; the table gives the means. Training is the wall-clock time of 12,000 iterations on an
+  otherwise idle RTX 4090 (i9-14900K).</p>
 
-<h3 id="completion">Completion (% of each clip tracked before a failure)</h3>
+<h3 id="encoders">MLP or attention</h3>
+<p>The attention encoder lets a causal Transformer over the observation history query the goal frames, so the
+  robot's own dynamics shape how it reads the reference. It lowers the G1 error on Ground by
+  4.4 mm and on Extreme by 1.7 mm, and the mean by
+  1.6 mm (RP1: 3.2 mm), at 1.6&times; the
+  training time. The MLP fits a 24 GB card; the attention encoder needs more memory, or <code>--pi_batch 1024</code>
+  on 24 GB (29 min on G1), which costs G1 2.7 mm on Ground and 2.1 mm on Extreme.
+  <code>--pipeline</code> splits training over two GPUs for 1.6&ndash;1.9&times; the speed.</p>
 <div class="scroll"><table>
-  <tr><th>Method</th><th class="n">G1 Loc / Man</th><th class="n">G1 Dance</th><th class="n">G1 Ground</th><th class="n">RP1 Loc / Man</th><th class="n">RP1 Dance</th><th class="n">RP1 Ground</th></tr>
-  <tr class="ref"><td>SONIC</td><td class="n">100 / 100</td><td class="n">98.9</td><td class="n">86.3</td><td class="n">&ndash;</td><td class="n">&ndash;</td><td class="n">&ndash;</td></tr>
-  <tr class="ref"><td>Mimic Lite v1.1</td><td class="n">99.3 / 93.6</td><td class="n">55.8</td><td class="n">65.5</td><td class="n">&ndash;</td><td class="n">&ndash;</td><td class="n">&ndash;</td></tr>
-  <tr><td>SuperMimic</td><td class="n">100 / 100</td><td class="n">98.0</td><td class="n">80.0</td><td class="n">99.4 / 100</td><td class="n">98.1</td><td class="n">80.5</td></tr>
-  <tr><td>NablaMimic</td><td class="n">99.3 / 100</td><td class="n">87.4</td><td class="n">82.3</td><td class="n">&ndash;</td><td class="n">&ndash;</td><td class="n">&ndash;</td></tr>
-  <tr><td>BlinkMimic</td><td class="n">100 / 100</td><td class="n">96.7</td><td class="n">88.0</td><td class="n">100 / 100</td><td class="n">93.8</td><td class="n">87.8</td></tr>
-  <tr><td>XMimic</td><td class="n">99.7 / 100</td><td class="n">95.2</td><td class="n">86.6</td><td class="n">100 / 100</td><td class="n">97.6</td><td class="n">88.7</td></tr>
-  <tr class="ours"><td>PartyMimic, 12,000 iterations</td><td class="n">99.8 / 98.7</td><td class="n">95.9</td><td class="n">93.4</td><td class="n">100 / 98.9</td><td class="n">94.2</td><td class="n">90.0</td></tr>
+  <tr><th>Encoder</th><th class="n">G1 time</th><th class="n">RP1 time</th><th class="n">G1 mean error</th><th class="n">RP1 mean error</th><th>GPU memory</th></tr>
+  <tr class="ours"><td>MLP (default)</td><td class="n">26 min</td><td class="n">26 min</td><td class="n">45.1 mm</td><td class="n">47.8 mm</td><td>22 GB peak: fits 24 GB</td></tr>
+  <tr class="ours"><td>Attention</td><td class="n">41 min</td><td class="n">42 min</td><td class="n">43.5 mm</td><td class="n">44.6 mm</td><td>&gt; 24 GB (or <code>--pi_batch 1024</code>)</td></tr>
 </table></div>
 
-<figure>
-  <img src="static/curves.png" alt="Error against training minutes on one RTX 4090">
-  <figcaption>Error at every scored checkpoint against training minutes on one RTX 4090 (log scale). PartyMimic is the
-    2-seed mean. The dashed and dotted lines are the official Mimic Lite v1.1 and SONIC errors.</figcaption>
-</figure>
+<h2 id="sparse">Sparse keypoint references</h2>
+<p>With <code>--interface sparse5</code> the policy gets <b>no joint angles</b> of the reference. Each goal frame is
+  only the pelvis pose and the poses of five keypoints: the head and both wrists and ankles. That is what a
+  motion-capture suit, a VR tracker set or a video pose estimator delivers, so the robot can follow such a source
+  without a joint-space retarget in the loop. Three additions make it nearly as accurate as joint references:</p>
+<ul class="tight">
+  <li>The observation adds the robot's own keypoint errors, from forward kinematics of its joint encoders.</li>
+  <li>A keypoint-to-joint network, fit to the motion library and frozen, estimates the reference pose for the
+    reference-action skip (<code>--kp_skip</code>).</li>
+  <li>An auxiliary head predicts the reference joint angles from the policy's reference latent (<code>--kp_aux</code>).</li>
+</ul>
+<p>On RP1 the mean whole-body error over the five sets is 48.7 mm from keypoints against
+  47.8 mm from joint references with the MLP (47.8 vs 44.6 mm with attention),
+  still below every baseline that sees the full joint reference (best: 60.4 mm). The keypoints
+  themselves are tracked within 2 mm
+  of joint references on Loco/Mani and Dance, with about half the error of the baselines. On Ground and Extreme the gap
+  depends on the encoder: lying, kneeling and flipping poses are less determined by five keypoints.
+  <code>tools/export_deploy_onnx.py</code> exports the policy with a keypoint input (<code>ref_kp</code>) and a
+  deployment YAML.</p>
+<div class="scroll"><table>
+  <tr><th>Reference</th><th>Encoder</th><th class="n">Loco/Mani</th><th class="n">Dance</th><th class="n">Ground</th><th class="n">Extreme</th><th class="n">Extreme, whole body</th></tr>
+  <tr class="robot"><td colspan="7">RoboParty RP1 &middot; wrist and ankle position error (mm, relative to the own pelvis heading)</td></tr>
+  <tr><td>Joint</td><td>MLP</td><td class="n">22.5</td><td class="n">41.9</td><td class="n">118.3</td><td class="n">85.4</td><td class="n">58.9<small>99%</small></td></tr>
+  <tr class="ours"><td>Sparse keypoints</td><td>MLP</td><td class="n">24.3</td><td class="n">42.8</td><td class="n">111.9</td><td class="n">87.7</td><td class="n">60.7<small>98%</small></td></tr>
+  <tr><td>Joint</td><td>attention</td><td class="n">22.1</td><td class="n">39.4</td><td class="n">101.1</td><td class="n">81.0</td><td class="n">56.2<small>98%</small></td></tr>
+  <tr class="ours"><td>Sparse keypoints</td><td>attention</td><td class="n">22.4</td><td class="n">39.9</td><td class="n">110.2</td><td class="n">86.2</td><td class="n">60.1<small>98%</small></td></tr>
+  <tr class="ref"><td>Joint</td><td>BlinkMimic</td><td class="n">40.0</td><td class="n">71.8</td><td class="n">126.6</td><td class="n">120.4</td><td class="n">80.3<small>98%</small></td></tr>
+  <tr class="ref"><td>Joint</td><td>XMimic</td><td class="n">42.3</td><td class="n">70.3</td><td class="n">143.1</td><td class="n">119.0</td><td class="n">79.5<small>98%</small></td></tr>
+</table></div>
+<div class="videos three">
+  <div><video src="static/videos/rp1_sp5_locomotion.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Sparse keypoints: locomotion</div>
+  <div><video src="static/videos/rp1_sp5_dance.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Sparse keypoints: dance</div>
+  <div><video src="static/videos/rp1_sp5_extreme.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Sparse keypoints: extreme martial arts</div>
+</div>
+
+<h2 id="videos">Sim2sim on held-out motions</h2>
+<p>Rollouts from the evaluator (MuJoCo, deterministic policy, default MLP encoder, seed 0) on the five held-out sets.
+  Each video is the clip with the <b>median</b> error of its set (Extreme: of its clips of at least 4 s for martial
+  arts and 2 s for jumps), so these clips are typical rather than the best ones. The robot is solid, the reference a
+  blue ghost, both at their global poses.</p>
+<div class="vrow">Unitree G1</div>
+<div class="videos three">
+  <div><video src="static/videos/g1_locomotion.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Locomotion</div>
+  <div><video src="static/videos/g1_manipulation.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Manipulation</div>
+  <div><video src="static/videos/g1_dance.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Dance</div>
+  <div><video src="static/videos/g1_ground.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Ground</div>
+  <div><video src="static/videos/g1_extreme.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Extreme: martial arts</div>
+  <div><video src="static/videos/g1_extreme_jump.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Extreme: jumps</div>
+</div>
+<div class="vrow">RoboParty RP1</div>
+<div class="videos three">
+  <div><video src="static/videos/rp1_locomotion.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Locomotion</div>
+  <div><video src="static/videos/rp1_manipulation.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Manipulation</div>
+  <div><video src="static/videos/rp1_dance.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Dance</div>
+  <div><video src="static/videos/rp1_ground.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Ground</div>
+  <div><video src="static/videos/rp1_extreme.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Extreme: martial arts</div>
+  <div><video src="static/videos/rp1_extreme_jump.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Extreme: jumps</div>
+</div>
 
 <h2 id="speed">Speed on LAFAN: like for like with XMimic and BlinkMimic</h2>
 <p><b>This comparison is on the LAFAN dataset</b> (LAFAN-40: the 40 G1 LAFAN1 clips, used for both training and
-  evaluation), XMimic's speed benchmark, not on the held-out library above.
+  evaluation), XMimic's speed benchmark, not on the held-out test sets above.
   <a href="https://github.com/nico-bohlinger/xmimic">XMimic</a> rebuilds BlinkMimic's main recipe in JAX and reports
   BlinkMimic's LAFAN-40 target in 0.91 min on four H100s. We ran its 1-GPU and 2-GPU (AL) trainers, BlinkMimic main and
   PartyMimic on our two RTX 4090s, under XMimic's protocol, 3 seeds each. PartyMimic keeps its recipe unchanged; it was
-  not tuned for this benchmark. On the 9,173-clip sets of the <a href="#results">results</a>, XMimic reproduces
-  BlinkMimic's errors (G1 30.9 vs 31.0 mm, RP1 30.6 vs 30.7 mm) in 15% less time.</p>
+  not tuned for this benchmark. In the <a href="#results">comparison above</a> XMimic matches BlinkMimic (G1 mean error 60.2 vs 59.9 mm).</p>
 <figure>
   <img src="static/lafan_speed.png" alt="LAFAN-40 evaluation return against training minutes and time to target">
 </figure>
@@ -198,173 +246,40 @@
   PartyMimic pipeline. Hardware: two RTX 4090
   (48 GB), i9-14900K. The two-GPU methods share the x1 link of the second GPU. XMimic AL runs its probe process on the
   learner GPU under CUDA MPS, as in its README.</p>
-<h3>Beyond LAFAN: two GPUs on the 9,173-clip library</h3>
-<p>The same G1 recipe and data as the <a href="#results">results</a> table, trained with <code>--pipeline</code> on the
-  two 4090s and scored by the leaderboard evaluator (2-seed means, held-out MotionDecode, mm). Twelve thousand iterations take 16 min instead of 30, at
-  the same Loc/Man error.</p>
-<div class="scroll"><table>
-  <tr><th>G1, PartyMimic</th><th class="n">Training</th><th class="n">Loc/Man</th><th class="n">Loc</th><th class="n">Man</th><th class="n">Dance</th><th class="n">Ground</th></tr>
-  <tr><td>1 GPU, 2,000 iterations</td><td class="n">6.7 min</td><td class="n">26.2</td><td class="n">29.3</td><td class="n">23.1</td><td class="n">43.1</td><td class="n">84.2</td></tr>
-  <tr class="ours"><td>2 GPUs, 2,000 iterations</td><td class="n">3.1 min</td><td class="n">25.6</td><td class="n">28.1</td><td class="n">23.0</td><td class="n">43.3</td><td class="n">86.2</td></tr>
-  <tr><td>1 GPU, 8,000 iterations</td><td class="n">21 min</td><td class="n">23.7</td><td class="n">26.1</td><td class="n">21.3</td><td class="n">38.2</td><td class="n">77.5</td></tr>
-  <tr class="ours"><td>2 GPUs, 8,000 iterations</td><td class="n">10.9 min</td><td class="n">23.8</td><td class="n">26.2</td><td class="n">21.3</td><td class="n">38.4</td><td class="n">78.6</td></tr>
-  <tr><td>1 GPU, 12,000 iterations</td><td class="n">30 min</td><td class="n">23.6</td><td class="n">25.5</td><td class="n">21.6</td><td class="n">38.1</td><td class="n">74.3</td></tr>
-  <tr class="ours"><td>2 GPUs, 12,000 iterations</td><td class="n">16.1 min</td><td class="n">23.2</td><td class="n">25.6</td><td class="n">20.8</td><td class="n">37.6</td><td class="n">78.3</td></tr>
-</table></div>
-<p class="note">The one-iteration lag of the pipeline costs nothing on Loc, Man and Dance. Ground
-  ends 4 mm worse in both seeds (78.6 and 78.0 vs 75.6 and 73.1); its completion is 91% vs 93%.</p>
-<h3 id="memory">GPU memory</h3>
-<p>Training on the full G1 library peaks at about 22 GB on one card, so it also fits a standard 24 GB RTX 4090. The pipeline splits
-  the work so that neither GPU needs more than 16 GB. The optional cross-attention reference encoder
-  (<code>--ref_enc xattn</code>) needs a larger card, or <code>--pi_batch 1024</code> on 24 GB.</p>
-<div class="scroll"><table>
-  <tr><th>Mode</th><th class="n">GPU 0</th><th class="n">GPU 1</th><th class="n">it/s</th></tr>
-  <tr><td>1 GPU</td><td class="n">22 GB</td><td class="n">&mdash;</td><td class="n">7.7</td></tr>
-  <tr class="ours"><td>2 GPUs (<code>--pipeline</code>)</td><td class="n">14 GB (collection + world model)</td>
-      <td class="n">16 GB (policy + critic)</td><td class="n">12.8</td></tr>
-</table></div>
-<p class="note">Peak memory per card (1 GPU: 22,461 MiB) over 300 iterations with the G1 results configuration
-  (9,173 clips), sampled once a second with <code>nvidia-smi</code>, on otherwise idle GPUs.</p>
-
-<h2 id="videos">Sim2sim on held-out motions</h2>
-<p>Rollouts from the leaderboard evaluator (MuJoCo, deterministic policy) on the four held-out splits. For each split
-  we show the clip with the <b>median</b> error, so these clips are typical rather than the best ones. The robot is
-  drawn solid and the reference motion as a translucent blue ghost. Both are drawn at their <b>global</b> poses in one
-  scene, so drift of the root shows as a gap between them. The overlay gives the mean global body position gap.
-  Policies: G1 seed 0 and RP1 seed 0 at 12,000 iterations.</p>
-<div class="vrow">Unitree G1</div>
-<div class="videos">
-  <div><video src="static/videos/g1_locomotion.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Locomotion</div>
-  <div><video src="static/videos/g1_manipulation.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Manipulation</div>
-  <div><video src="static/videos/g1_dance.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Dance</div>
-  <div><video src="static/videos/g1_ground.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Ground</div>
-</div>
-<div class="vrow">RoboParty RP1</div>
-<div class="videos">
-  <div><video src="static/videos/rp1_locomotion.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Locomotion</div>
-  <div><video src="static/videos/rp1_manipulation.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Manipulation</div>
-  <div><video src="static/videos/rp1_dance.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Dance</div>
-  <div><video src="static/videos/rp1_ground.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Ground</div>
-</div>
-
-<h2 id="highdyn">High-dynamic motions, zero-shot</h2>
-<p>The same policies, unchanged, on 64 flat-ground clips that no method trained on: 17 jumps, 15 martial-arts forms,
-  14 twist jumps and kip-ups, and 18 flips. They come from MotionDecode (none of them among the 228 test clips) and five
-  from our own mocap. Every method is scored with the same evaluator and failure rule as above. The videos show clips
-  PartyMimic completes (seed 0).</p>
-<div class="vrow">Unitree G1 &middot; zero-shot</div>
-<div class="videos">
-  <div><video src="static/videos/g1_hd_jumps.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Triple jump</div>
-  <div><video src="static/videos/g1_hd_martial.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Martial arts: wild horse leaps the gully</div>
-  <div><video src="static/videos/g1_hd_twists.mp4" autoplay muted loop playsinline controls preload="metadata"></video>360&deg; twist jump</div>
-  <div><video src="static/videos/g1_hd_flips.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Back somersault</div>
-</div>
-<div class="vrow">RoboParty RP1 &middot; zero-shot</div>
-<div class="videos">
-  <div><video src="static/videos/rp1_hd_jumps.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Triple jump</div>
-  <div><video src="static/videos/rp1_hd_martial.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Martial arts: wild horse leaps the gully</div>
-  <div><video src="static/videos/rp1_hd_twists.mp4" autoplay muted loop playsinline controls preload="metadata"></video>360&deg; twist jump</div>
-  <div><video src="static/videos/rp1_hd_highjump.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Standing high jump</div>
-</div>
-<div class="scroll"><table>
-  <tr><th rowspan="2">Method</th><th class="n" colspan="2">Jumps</th><th class="n" colspan="2">Martial arts</th>
-      <th class="n" colspan="2">Twists &amp; kip-ups</th><th class="n" colspan="2">Flips</th></tr>
-  <tr><th class="n">done %</th><th class="n">mm</th><th class="n">done %</th><th class="n">mm</th><th class="n">done %</th><th class="n">mm</th><th class="n">done %</th><th class="n">mm</th></tr>
-  <tr class="robot"><td colspan="9">Unitree G1 &middot; clips completed (%) and body position error (mm)</td></tr>
-  <tr class="ref"><td>SONIC</td><td class="n">82</td><td class="n">46.4</td><td class="n"><b>87</b></td><td class="n">65.2</td><td class="n">29</td><td class="n">55.8</td><td class="n">0</td><td class="n">45.5</td></tr>
-  <tr class="ref"><td>Mimic Lite v1.1</td><td class="n">82</td><td class="n">42.8</td><td class="n">73</td><td class="n">49.7</td><td class="n">7</td><td class="n">51.3</td><td class="n">0</td><td class="n">41.6</td></tr>
-  <tr><td>SuperMimic</td><td class="n"><b>100</b></td><td class="n">58.8</td><td class="n"><b>87</b></td><td class="n">77.9</td><td class="n">21</td><td class="n">78.0</td><td class="n">0</td><td class="n">53.7</td></tr>
-  <tr><td>NablaMimic</td><td class="n">76</td><td class="n">41.9</td><td class="n"><b>87</b></td><td class="n">59.6</td><td class="n"><b>36</b></td><td class="n">53.1</td><td class="n">0</td><td class="n">44.9</td></tr>
-  <tr><td>BlinkMimic</td><td class="n">94</td><td class="n">45.0</td><td class="n">80</td><td class="n">64.8</td><td class="n"><b>36</b></td><td class="n">62.0</td><td class="n"><b>11</b></td><td class="n">51.2</td></tr>
-  <tr><td>XMimic</td><td class="n">94</td><td class="n">45.1</td><td class="n"><b>87</b></td><td class="n">58.8</td><td class="n"><b>36</b></td><td class="n">59.8</td><td class="n">0</td><td class="n">53.6</td></tr>
-  <tr class="ours"><td>PartyMimic, 12,000 iterations</td><td class="n">94</td><td class="n"><b>34.0</b></td><td class="n"><b>87</b></td><td class="n"><b>39.7</b></td><td class="n">32</td><td class="n">54.7</td><td class="n">6</td><td class="n">45.6</td></tr>
-  <tr class="robot"><td colspan="9">RoboParty RP1 &middot; clips completed (%) and body position error (mm)</td></tr>
-  <tr><td>SuperMimic</td><td class="n"><b>94</b></td><td class="n">57.5</td><td class="n"><b>87</b></td><td class="n">57.4</td><td class="n">21</td><td class="n">79.1</td><td class="n">0</td><td class="n">65.0</td></tr>
-  <tr><td>BlinkMimic</td><td class="n">82</td><td class="n">54.5</td><td class="n"><b>87</b></td><td class="n">50.7</td><td class="n"><b>36</b></td><td class="n">72.1</td><td class="n">6</td><td class="n">59.4</td></tr>
-  <tr><td>XMimic</td><td class="n">82</td><td class="n">59.9</td><td class="n"><b>87</b></td><td class="n">49.3</td><td class="n"><b>36</b></td><td class="n">66.6</td><td class="n"><b>11</b></td><td class="n">63.8</td></tr>
-  <tr class="ours"><td>PartyMimic, 12,000 iterations</td><td class="n">91</td><td class="n"><b>41.5</b></td><td class="n"><b>87</b></td><td class="n"><b>27.7</b></td><td class="n"><b>36</b></td><td class="n">61.6</td><td class="n">0</td><td class="n">59.9</td></tr>
-</table></div>
-<ul class="tight">
-  <li><b>Jumps and martial arts: lowest error on both robots.</b> PartyMimic is at 34.0 / 39.7 mm on G1 and
-    41.5 / 27.7 mm on RP1; the next best method is at 41.9 / 49.7 and 54.5 / 49.3 mm. Its completion is within one clip
-    of the best.</li>
-  <li><b>Flips fail for every method,</b> SONIC included: at most 11% are completed. The robot starts turning before it
-    has jumped. Its pelvis rises 0.08&ndash;0.10 m where the reference rises 0.35 m. Only 7 of the 9,173 training clips
-    are flips.</li>
-  <li><b>More flip data helps, up to a point.</b> Trained with 105 extra MotionDecode flips, twist jumps and kip-ups (none
-    in this test set), G1 completes 10 of 18 flips instead of 1, and 7 of 13 twists and kip-ups instead of 3. Its
-    held-out Loc/Man and Ground error do not get worse. Front tuck somersaults stay unlearned, even on the training
-    clips.</li>
-</ul>
-<p class="note">Error is averaged over the tracked part of each clip, so for flips and twists compare completion.
-  PartyMimic rows are 2-seed means. The extra-data counts leave out one twist clip that duplicates an added training
-  clip.</p>
 
 <h2 id="recipe">The PartyMimic recipe and what matters most</h2>
-<p>This section is PartyMimic's own training recipe: its default settings, ranked by how much each one matters.
-  PartyMimic trains with BPTT: the policy gradient is the derivative of an analytic tracking reward, back-propagated
-  through 32 imagined steps of a learned world model and closed by the critic's value gradient
-  &nabla;<sub>s</sub>V at the horizon. Every factor below changes either the <i>direction</i> or the <i>noise</i> of
-  that gradient.
-  The table lists factors from largest to smallest effect. Each effect is the change when the factor is removed,
-  compared at the same iteration (G1, held-out Loc/Man error unless stated).
-  The defaults of <code>python -m partymimic.train</code> are exactly this recipe.</p>
+<p>PartyMimic trains with BPTT: the policy gradient is the derivative of an analytic tracking reward through 32 imagined
+  steps of a learned world model, closed by the critic's value gradient &nabla;<sub>s</sub>V. The defaults of
+  <code>python -m partymimic.train</code> are this recipe. Effects are the change when a factor is removed (G1, held-out
+  Loc/Man error, ablations on the earlier 9,173-clip library).</p>
 <div class="scroll"><table>
-  <tr><th>Factor</th><th>PartyMimic setting</th><th class="n">Effect when removed</th><th>Why it matters this much</th></tr>
-  <tr><td>Muon optimizer</td><td><code>--pi_opt muon --wm_opt muon</code></td><td class="n">Adam: +10.7 mm<br>(Dance +25 mm)</td>
-      <td>The training set is 65% standing / in-place motion and 6% ground motion. The ground-motion gradient is nearly
-        orthogonal to the rest (cosine 0.02&ndash;0.15), so the summed gradient points almost entirely at the
-        majority. Muon orthogonalizes each update, so minority directions get 2&ndash;4&times; the relative step they
-        get with SGD or Adam.</td></tr>
-  <tr><td>Narrow tracking-reward kernels</td><td><code>--std_scale 0.35</code></td><td class="n">&times;1 widths: +6.5 mm<br>(Dance +10.8 mm)</td>
-      <td>BPTT follows &part;r/&part;e = (2e/&sigma;&sup2;)&middot;e<sup>&minus;e&sup2;/&sigma;&sup2;</sup>, which
-        peaks at e = &sigma;/&radic;2. The default body kernel (&sigma; = 0.3 m) peaks at 21 cm. A trained policy is
-        at 2&ndash;3 cm, where that gradient is almost zero. At 0.35&times; the gradient at 3 cm is 7.6&times;
-        larger. PPO only sees reward values; BPTT sees their slope. The same change also improves NablaMimic by
-        5.8 mm.</td></tr>
-  <tr><td>Imagination horizon 32</td><td><code>--horizon 32</code></td><td class="n">16 steps: +5.9 mm<br>(Dance +12.5 mm)</td>
-      <td>Fewer model steps leave more of the gradient to &nabla;<sub>s</sub>V. The critic is fit to values, not
-        slopes: its state gradient has cosine 0.35 to the true return gradient.</td></tr>
+  <tr><th>Factor</th><th>Setting</th><th class="n">Effect when removed</th><th>Why</th></tr>
+  <tr><td>Muon optimizer</td><td><code>--pi_opt muon --wm_opt muon</code></td><td class="n">+10.7 mm (Dance +25)</td>
+      <td>Orthogonalized updates keep the rare motions' nearly orthogonal gradients from being drowned by the majority.</td></tr>
+  <tr><td>Narrow reward kernels</td><td><code>--std_scale 0.35</code></td><td class="n">+6.5 mm (Dance +10.8)</td>
+      <td>BPTT follows the reward's slope, which vanishes at cm-level errors with the default widths.</td></tr>
+  <tr><td>Horizon 32</td><td><code>--horizon 32</code></td><td class="n">16 steps: +5.9 mm</td>
+      <td>Shorter chains lean on &nabla;<sub>s</sub>V, which is only loosely fit.</td></tr>
   <tr><td>Reference-action skip</td><td><code>--pi_ref_skip</code></td><td class="n">+5.6 mm</td>
-      <td>The network outputs a residual around the next reference joint pose, so the gradient refines tracking
-        instead of having to rebuild the pose.</td></tr>
-  <tr><td>Policy EMA 0.995</td><td><code>--pi_ema 0.995</code></td><td class="n">+3.4 mm</td>
-      <td>The policy gradient's critical batch (700&ndash;4,900) is close to the batch (2,048), so single updates
-        are noisy. Deploying the weight average removes that noise.</td></tr>
-  <tr><td>Collision model of the evaluator</td><td><code>--robot g1mj</code> (capsules, self-collision)</td><td class="n">LAFAN-40 falls 14/40 instead of 3/40</td>
-      <td>BPTT follows the world model's Jacobian, and the model learns whatever contacts the training simulator has
-        (arms passing through the torso, 4-sphere feet). The policy then exploits those contacts and fails under the
-        evaluator's.</td></tr>
-  <tr><td>Value-gradient consistency</td><td><code>--v_gcons 0.5</code></td><td class="n">+1.0 mm (better in 22 of 22 seed pairs)</td>
-      <td>&nabla;<sub>s</sub>V is the noisiest term of the policy gradient (removing &gamma;<sup>H</sup>V raises
-        SNR 10&ndash;20&times;, but makes the policy short-sighted). The backward pass already computes the true
-        return gradient &nabla;<sub>S<sub>k</sub></sub>G<sub>k</sub> at every imagined state. Fitting
-        &nabla;<sub>s</sub>V to it raises the cosine from 0.35 to 0.6, at +10% time per iteration.</td></tr>
-  <tr><td>Muon on every policy layer</td><td><code>--pi_muon_io</code></td><td class="n">+1.2&ndash;1.6 mm<br>(Dance +4 mm)</td>
-      <td>Same reason as Muon. With Adam on the input layer, the features that separate rare motions get
-        majority-dominated updates. Costs +0.5% time.</td></tr>
-  <tr><td>Diversity-balanced resets</td><td><code>--div_k 24 --div_tau 0</code></td><td class="n">Ground +6&ndash;19 mm, &minus;4&ndash;8 pts completion</td>
-      <td>The uniform half of the reset distribution gives equal mass to 24 k-means clusters of motion features
-        instead of being proportional to duration. Ground and transition motions rise from 8% to 30% of resets, at
-        no cost.</td></tr>
-  <tr><td>Self-imitation</td><td><code>--sil 1</code></td><td class="n">+0.5&ndash;0.7 mm early, neutral late</td>
-      <td>Early in training the world model and critic are inaccurate. Actions that really did better than V(s) in
-        the simulator still give an unbiased improvement direction (advantage-weighted regression on replay).</td></tr>
-  <tr><td><i>Removed:</i> evaluation-probe resets</td><td>off (BlinkMimic main: on)</td><td class="n">same accuracy, 2.1&times; faster</td>
-      <td>These resets mine failures on the <i>training</i> clips. That is cheap and on-target for 40 LAFAN clips.
-        On 9k clips the sweeps take half the training time and do not help held-out motions.</td></tr>
+      <td>The network refines the next reference pose instead of rebuilding it.</td></tr>
+  <tr><td>Policy EMA</td><td><code>--pi_ema 0.995</code></td><td class="n">+3.4 mm</td>
+      <td>Single updates are noisy at this batch size; the average removes the noise.</td></tr>
+  <tr><td>Evaluator's collision model</td><td><code>--robot g1mj</code></td><td class="n">LAFAN falls 14/40 vs 3/40</td>
+      <td>The policy exploits whatever contacts the world model learned from the training simulator.</td></tr>
+  <tr><td>Value-gradient consistency</td><td><code>--v_gcons 0.5</code></td><td class="n">+1.0 mm</td>
+      <td>Fits &nabla;<sub>s</sub>V to the true return gradient already computed by the backward pass.</td></tr>
+  <tr><td>Diversity-balanced resets</td><td><code>--div_k 24</code></td><td class="n">Ground +6&ndash;19 mm</td>
+      <td>Resets spread over motion clusters instead of duration, so ground motions get 30% of them instead of 8%.</td></tr>
+  <tr><td>Self-imitation</td><td><code>--sil 1</code></td><td class="n">+0.5 mm early</td>
+      <td>Real better-than-V actions guide the policy while the world model and critic are still inaccurate.</td></tr>
 </table></div>
-<p class="note">Effects of the top five factors come from single-factor ablations at 6,000&ndash;12,000 iterations;
-  the significance threshold is 2 mm, given seed noise of 0.1&ndash;1.4 mm on Loc/Man. The last four come from
-  seed-paired comparisons on two machines. Changes that did not help include critic ensembles, smoothing V, wider or
-  mixed reward kernels, more simulator data, larger or wider world models, horizon 48, and action-gradient
-  clipping.</p>
 
 <h2 id="supermimic">Why SuperMimic works: full-factor ablation</h2>
 <p>Stage 1 of the study ablated SuperMimic itself, factor by factor, on our reimplementation (LAFAN-40, G1,
   6,000 iterations per variant, one variant per factor). The score is the normalized evaluation return (mean of the
   last two evaluations, deterministic policy). The baseline over 3 seeds is 0.686 &plusmn; 0.048, and single-seed
   |z| &lt; 1.5 counts as noise. Δ is the change from the baseline.</p>
+<details><summary>All variants</summary>
 <div class="scroll"><table>
   <tr><th>Variant</th><th>What it tests</th><th class="n">Score</th><th class="n">&Delta;</th><th>Verdict</th></tr>
 <tr class="grp"><td colspan="5">Baseline (3 seeds)</td></tr>
@@ -437,6 +352,7 @@
 <tr class="trend-better"><td><code>piup2</code> 2 policy updates per iteration</td><td>updates vs wall-clock</td><td>0.723</td><td>+0.050</td><td>better (trend)</td></tr>
 <tr class="sig-better"><td><code>piup4</code> 4 policy updates per iteration</td><td>updates vs wall-clock (2.2× slower per iteration)</td><td>0.781</td><td>+0.109</td><td>better</td></tr>
 </table></div>
+</details>
 <h3>Conclusions: what dominates and why</h3>
 <ul class="tight">
   <li><b>The multi-step gradient through an online-refit world model <i>is</i> the method.</b>
@@ -465,17 +381,13 @@
 </ul>
 
 <h2>Use it</h2>
-<p>Code, data format, training, export and evaluation instructions are in the
-  <a href="https://github.com/Roboparty/PartyMimic#readme">README</a>. One command trains the recipe:
-  <code>bash scripts/train.sh logs/g1 --robot g1mj --motion_dir &lt;npz clips&gt;</code>. Options:</p>
+<p>Instructions for data, training, export and evaluation are in the
+  <a href="https://github.com/Roboparty/PartyMimic#readme">README</a>.</p>
 <ul>
-  <li><code>--ref_enc xattn</code>: a cross-attention reference encoder. It lowers Ground error by 4&ndash;8 mm and
-    Dance error by 2 mm, with Loc/Man unchanged, and takes 1.6&times; the training time.</li>
-  <li><code>--interface sparse5</code>: the policy is given only the pelvis, head, wrist and ankle poses of the
-    reference. A keypoint-to-joint network fit to the library restores the reference-action skip. On RP1 it reaches
-    Loc/Man 21.1 mm and Ground 100.0 mm, against 19.5 and 94.3 mm with joint references.</li>
-  <li><code>--init &lt;run&gt;/last.pt</code>: fine-tunes a trained policy on a few clips before deployment. Three
-    held-out G1 ground transitions went from 120&ndash;415 mm to 24&ndash;36 mm in 2k iterations.</li>
+  <li>Default (MLP): <code>bash scripts/train.sh logs/g1 --robot g1mj --motion_dir &lt;npz clips&gt;</code></li>
+  <li>Attention encoder: add <code>--ref_enc xattn</code> (24 GB cards: also <code>--pi_batch 1024</code>).</li>
+  <li>Sparse keypoints: add <code>--interface sparse5</code>; export with <code>tools/export_deploy_onnx.py</code>.</li>
+  <li>Two GPUs: add <code>--pipeline</code>. Fine-tune on a few clips before deployment: <code>--init &lt;run&gt;/last.pt</code>.</li>
 </ul>
 
 <footer>
