@@ -1,6 +1,7 @@
 """RoboParty RP1 (rp1_28dof) as mjlab models it: the capsule-collision MJCF of UFO's ``rp1_28dof_mjlab`` (self-collision
-on), RoboParty ``RP1_3_CFG`` PD gains / effort limits / armatures (the hardware values of gen_tracker's ``rp1_mjlab``;
-the yaw / pitch wrists take the roll wrist's gains) and gen_tracker's standing pose. Tracked bodies are the RP1
+on), RoboParty's current PD gains / effort limits / armatures and standing pose (robolab ``RP1_24DOF_CFG`` at 45cdc13;
+its single wrist joint is our wrist roll, and the wrist yaw / pitch joints it lacks take the wrist's gains and a zero
+default), joint frictionloss of rp1_description's ``mjcf/robot.xml`` (8c12d13). Tracked bodies are the RP1
 counterparts of BeyondMimic's G1 set; the action scale is 0.25 * effort_limit / stiffness, as for the G1.
 
 RP1's left / right pitch-type joint axes are mirror images (``0 1 0`` against ``0 -1 0``), so the left-right mirror
@@ -24,18 +25,14 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.a
 MJCF_PATH = os.path.join(REPO, "data", "rp1_28dof_mjlab", "rp1_28dof.xml")
 MOTION_DIR = os.path.join(REPO, "data", "rp1_motions")
 
-LEG_ARM, ARM_ARM = 0.029085325, 0.01
 # (joint regex, stiffness, damping, effort limit, armature)
 ACTUATORS = (
-    ("waist_roll_joint", 120.0, 12.0, 141.7, LEG_ARM),
-    ("waist_yaw_joint", 100.0, 5.0, 141.7, LEG_ARM),
-    (".*_hip_(pitch|roll)_joint", 120.0, 12.0, 141.7, LEG_ARM),
-    (".*_(hip_yaw|knee)_joint", 100.0, 5.0, 141.7, LEG_ARM),
-    (".*_ankle_(pitch|roll)_joint", 40.0, 2.0, 70.6, ARM_ARM),
-    (".*_shoulder_(pitch|roll)_joint", 40.0, 4.0, 35.3, ARM_ARM),
-    (".*_(shoulder_yaw|wrist_roll|wrist_yaw|wrist_pitch)_joint", 20.0, 1.0, 35.3, ARM_ARM),
-    (".*_elbow_joint", 30.0, 3.0, 35.3, ARM_ARM),
+    ("waist_(roll|yaw)_joint|.*_hip_(pitch|roll)_joint|.*_knee_joint", 120.0, 7.5, 140.0, 0.0290856),
+    (".*_(hip_yaw|shoulder_pitch)_joint", 35.0, 2.5, 55.0, 0.00884),
+    (".*_ankle_(pitch|roll)_joint", 25.0, 1.5, 64.0, 0.006266268),
+    (".*_(shoulder_(roll|yaw)|elbow|wrist_(roll|yaw|pitch))_joint", 12.5, 0.75, 32.0, 0.00313313),
 )
+JOINT_FRICTIONLOSS = 0.1  # the MJCF's joint damping is already robot.xml's 0.01
 
 TRACKED_BODIES = (
     "base_link", "left_hip_roll_link", "left_knee_link", "left_ankle_roll_link",
@@ -46,10 +43,10 @@ TRACKED_BODIES = (
 
 DEFAULT_JOINT_POS = {
     "left_hip_pitch_joint": -0.1, "right_hip_pitch_joint": 0.1,
-    "left_knee_joint": -0.2, "right_knee_joint": 0.2,
-    ".*_ankle_pitch_joint": -0.1,
-    "left_shoulder_pitch_joint": 0.05, "right_shoulder_pitch_joint": -0.05,
-    "left_shoulder_roll_joint": -0.18, "right_shoulder_roll_joint": 0.18,
+    "left_knee_joint": -0.3, "right_knee_joint": 0.3,
+    ".*_ankle_pitch_joint": -0.2,
+    "left_shoulder_pitch_joint": 0.2, "right_shoulder_pitch_joint": -0.2,
+    "left_shoulder_roll_joint": 0.2, "right_shoulder_roll_joint": -0.2,
     "left_elbow_joint": -1.2, "right_elbow_joint": 1.2,
 }  # fmt: skip
 
@@ -93,6 +90,9 @@ def get_spec() -> mujoco.MjSpec:
     spec = mujoco.MjSpec.from_file(MJCF_PATH)
     for act in list(spec.actuators):  # the position actuators come from the EntityCfg
         spec.delete(act)
+    for j in spec.joints:
+        if j.type == mujoco.mjtJoint.mjJNT_HINGE:
+            j.frictionloss = JOINT_FRICTIONLOSS
     return spec
 
 
