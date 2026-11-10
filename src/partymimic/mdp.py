@@ -11,8 +11,8 @@ from dataclasses import dataclass
 import torch
 
 from .kinematics import Kinematics
-from .motion import CONTROL_DT, MotionLib
-from .rotations import mat_to_6d, mm3, mv3, quat_to_mat, mat_to_quat, rot_angle_sq, yaw_mat
+from .motion import CONTROL_DT, SPARSE5_ERR, MotionLib
+from .rotations import mat_to_6d, mm3, mv3, quat_to_mat, mat_to_quat, rot_angle_sq, so3_log, yaw_mat
 from .sensing import SensingCfg, obs_noise
 
 
@@ -20,14 +20,20 @@ def state_dim(J: int) -> int:
     return 3 + 4 + 3 + 3 + J + J
 
 
-def obs_dim(J: int) -> int:
-    return J + J + 3 + 3 + J + 6
+def obs_err_dim(interface: str = "joint") -> int:
+    """Size of the decoder-only block at the end of the observation (--interface sparse5: MDP.kp_err)."""
+    return SPARSE5_ERR if interface == "sparse5" else 0
 
 
-def obs_scale(J: int) -> torch.Tensor:
+def obs_dim(J: int, interface: str = "joint") -> int:
+    return J + J + 3 + 3 + J + 6 + obs_err_dim(interface)
+
+
+def obs_scale(J: int, interface: str = "joint") -> torch.Tensor:
     # normalization of the obs before the policy (qd and angular velocity are large)
     return torch.cat(
-        (torch.ones(J), torch.full((J,), 0.1), torch.full((3,), 0.25), torch.ones(3), torch.ones(J), torch.ones(6))
+        (torch.ones(J), torch.full((J,), 0.1), torch.full((3,), 0.25), torch.ones(3), torch.ones(J), torch.ones(6),
+         torch.ones(obs_err_dim(interface)))  # fmt: skip
     )
 
 
@@ -93,10 +99,11 @@ class MDP:
         dev = default_q.device
         J = default_q.shape[0]
         self.num_j = J
-        self.obs_dim, self.xi_dim = obs_dim(J), xi_dim
+        self.interface = motion.interface  # MotionLib.set_interface before the MDP is built
+        self.obs_dim, self.xi_dim = obs_dim(J, self.interface), xi_dim
         self.critic_extra = J + len(kin.tracked_idx) * 3 + 3 + 6 + self.xi_dim
-        self.obs_noise = obs_noise(sensing, J).to(dev)
-        self.obs_scale = obs_scale(J).to(dev)
+        self.obs_noise = obs_noise(sensing, J, self.interface).to(dev)
+        self.obs_scale = obs_scale(J, self.interface).to(dev)
         # InstantTrack contact reward (training only): tracked-body indices of the feet, set by the trainer
         self.feet: list[int] = []
 
@@ -108,7 +115,22 @@ class MDP:
         dq0 = xi[..., 1 : 1 + q.shape[-1]]
         g_b = -R[..., 2, :]  # R^T (0,0,-1)
         rel = mat_to_6d(mm3(Rt, self.motion.root_R[f]))
-        return torch.cat((q - self.default_q - dq0, qd, mv3(Rt, w), g_b, a_prev, rel), -1)
+        o = (q - self.default_q - dq0, qd, mv3(Rt, w), g_b, a_prev, rel)
+        if self.interface == "sparse5":
+            o += (self.kp_err(R, q - dq0, f),)
+        return torch.cat(o, -1)
+
+    def kp_err(self, R, q, f) -> torch.Tensor:
+        """--interface sparse5 observation block: wrist / ankle position errors (4 x 3), their so3_log orientation errors
+        (4 x 3) and the head orientation error (3) of the robot (forward kinematics of the joint positions q for the
+        root attitude R) against reference frame f, each side relative to its own pelvis heading frame."""
+        m, kp = self.motion, self.motion.kp[1:]  # head, wrists, ankles
+        bp, bR = self.kin.pose(mm3(yaw_mat(R).transpose(-1, -2), R), q, kp)
+        Ht = yaw_mat(m.root_R[f]).transpose(-1, -2).unsqueeze(-3)
+        rp = mv3(Ht, m.kp_p[f][..., 1:, :] - m.root_p[f].unsqueeze(-2))
+        rR = mm3(Ht, m.kp_R[f][..., 1:, :, :])
+        e_R = so3_log(mm3(rR.transpose(-1, -2), bR))
+        return torch.cat(((bp - rp)[..., 1:, :].flatten(-2), e_R[..., 1:, :].flatten(-2), e_R[..., 0, :]), -1)
 
     def add_noise(self, o: torch.Tensor) -> torch.Tensor:
         return o + (2 * torch.rand_like(o) - 1) * self.obs_noise

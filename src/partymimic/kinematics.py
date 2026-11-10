@@ -89,3 +89,24 @@ class Kinematics:
             torch.stack([V[i] for i in idx], -2),
             torch.stack([W[i] for i in idx], -2),
         )
+
+    def pose(self, R, q, tracked: list[int]):
+        """Positions relative to the root and rotations of the tracked bodies ``tracked`` (indices into tracked_idx)
+        for the root rotation R (B,3,3) and joint positions q (B,J); no velocities."""
+        need = set()
+        for t in tracked:
+            i = self.tracked_idx[t]
+            while i >= 0 and i not in need:
+                need.add(i)
+                i = self.parent[i]
+        P, Rs = {}, {}
+        for i in sorted(need):
+            par = self.parent[i]
+            if par < 0:
+                P[i], Rs[i] = torch.zeros_like(R[..., 0]), R
+                continue
+            R_off = mm3(Rs[par], self.off_R[i])
+            P[i] = P[par] + mv3(Rs[par], self.off_p[i])
+            Rs[i] = mm3(R_off, axis_angle_to_mat(self.axes[i], q[..., self.joint_idx[i]]))
+        idx = [self.tracked_idx[t] for t in tracked]
+        return torch.stack([P[i] for i in idx], -2), torch.stack([Rs[i] for i in idx], -3)

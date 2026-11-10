@@ -78,6 +78,8 @@ def main():
     dev = "cpu"
     robot = get_robot(a.robot)
     ck = torch.load(a.ckpt, map_location=dev)
+    if ck["args"].get("interface", "joint") != "joint":
+        raise SystemExit("--interface sparse5: use tools/export_deploy_onnx.py (its observation needs the keypoint errors)")
     K, Hh = ck["args"]["goal_frames"], ck["args"]["hist"]
     motion = MotionLib([a.motion], Kinematics(robot, dev), dev, robot.load_motion)
     networks.AMP_DTYPE = None  # fp32 graph (training ran the MLPs under bf16 autocast)

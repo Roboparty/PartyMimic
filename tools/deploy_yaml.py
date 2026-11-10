@@ -93,3 +93,30 @@ def build_blink_robot(model_file: str, future: int, spec) -> dict:
             "ref_root": {"ref_root": {"_target_": "supermimic.ref_anchor", "future_steps": steps}},
         },
     }
+
+
+def build_sparse5(model_file: str, window: int, spec, kp_names: list[str], offsets: list[int], err_dim: int) -> dict:
+    """--interface sparse5 policy (export_deploy_onnx.DeploySparse5): proprio and root_quat_hist as build_blink_robot,
+    the reference as ref_kp = world position + wxyz quaternion of the keypoint bodies (given order) at frames f..f+W
+    (motion steps -1..W-1). ``interface`` documents the layouts the graph builds from them."""
+    cfg = build_blink_robot(model_file, window, spec)
+    steps = list(range(-1, window))
+    cfg["motion"].update(future_steps=steps, body_names=list(kp_names))
+    cfg["observation"].pop("ref_joint_pos")
+    cfg["observation"].pop("ref_root")
+    cfg["observation"]["ref_kp"] = {"ref_kp": {"_target_": "supermimic.ref_bodies", "future_steps": steps,
+                                               "body_names": list(kp_names)}}  # fmt: skip
+    cfg["interface"] = {
+        "name": "sparse5",
+        "keypoints": {"pelvis": kp_names[0], "head": kp_names[1], "left_wrist": kp_names[2], "right_wrist": kp_names[3],
+                      "left_ankle": kp_names[4], "right_ankle": kp_names[5]},
+        "ref_kp": f"[{window + 1} frames f..f+{window}, {len(kp_names)} keypoints, pos xyz (m) + quat wxyz], world frame",
+        "goal_frames": list(offsets),
+        "goal_per_frame": "relative to the frame-f reference pelvis heading frame: pelvis pos 3 + 6D 6, head 6D 6, "
+                          "then left wrist, right wrist, left ankle, right ankle pos 3 + 6D 6 (51)",
+        "error_block": f"({err_dim}) robot FK (newest joint pos + default, root quat) vs reference frame f, each relative "
+                       "to its own pelvis heading frame: wrist / ankle pos error 4 x 3, so3_log ori error 4 x 3, head "
+                       "so3_log ori error 3; decoder only, newest step",
+        "action": "joint target = default + action_scale * action (no reference-action skip)",
+    }  # fmt: skip
+    return cfg

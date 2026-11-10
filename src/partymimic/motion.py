@@ -19,6 +19,26 @@ BIN_FRAMES = 50  # 1 s bins for return-based reset sampling
 
 GOAL_Q_OFFSET = 15  # index of the joint positions q(f+1) in the goal vector (first future frame: dp 3, rot 6, v 3, w 3, then q)
 
+# --interface: what the policy is told about the reference. "joint": root motion + joint positions / velocities per goal
+# frame (GOAL_Q_OFFSET layout). "sparse5": poses of five keypoints per goal frame in the reference's own current pelvis
+# heading frame, pelvis position + 6D (9), head 6D (6), then left wrist, right wrist, left ankle, right ankle position
+# + 6D (9 each); no joint or velocity channel.
+INTERFACES = ("joint", "sparse5")
+SPARSE5_FRAME = 9 + 6 + 4 * 9
+# sparse5 observation block (mdp.MDP.kp_err): wrist / ankle position (4 x 3) and orientation (4 x 3, so3_log) errors and
+# the head orientation error (3) of the robot against reference frame f, both relative to their own pelvis heading frame
+SPARSE5_ERR = 4 * 3 + 4 * 3 + 3
+
+
+def sparse5_bodies(tracked: tuple[str, ...]) -> list[int]:
+    """Tracked-body indices of pelvis, head, left / right wrist, left / right ankle. Neither robot has a head link: the
+    head is rigid on the torso (G1 torso_link, RP1 waist_yaw_link, whose mesh carries the head)."""
+    head = next(n for n in ("waist_yaw_link", "torso_link") if n in tracked)
+    wrist = [n for n in tracked if "_wrist_" in n]
+    names = [tracked[0], head, *(next(n for n in wrist if n.startswith(s)) for s in ("left", "right")),
+             "left_ankle_roll_link", "right_ankle_roll_link"]  # fmt: skip
+    return [tracked.index(n) for n in names]
+
 
 class MotionLib:
     def __init__(self, files: list[str], kin: Kinematics, device: str, load_motion: Callable[[str], MotionArrays]):
@@ -135,7 +155,19 @@ class MotionLib:
             floor[s] = z[s].quantile(q, dim=0)
         self.ref_contact = ((z < floor + margin) & (vh < vmax)).float()
 
+    interface = "joint"
+    kp: list[int] | None = None  # sparse5: tracked-body indices of the keypoints (sparse5_bodies)
+
+    def set_interface(self, interface: str, tracked: tuple[str, ...]) -> None:
+        assert interface in INTERFACES, interface
+        self.interface = interface
+        if interface == "sparse5":
+            self.kp = sparse5_bodies(tuple(tracked))
+            self.kp_p, self.kp_R = self.body_p[:, self.kp].contiguous(), self.body_R[:, self.kp].contiguous()
+
     def goal_dim(self, K: int) -> int:
+        if self.interface == "sparse5":
+            return K * SPARSE5_FRAME
         return K * (3 + 6 + 3 + 3 + 2 * self.q.shape[-1])
 
     def future_frames(self, f: torch.Tensor, K: int) -> torch.Tensor:
@@ -149,6 +181,12 @@ class MotionLib:
         fut = self.future_frames(f, K)  # (B,K)
         H = yaw_mat(self.root_R[f])  # (B,3,3)
         Ht = H.transpose(-1, -2).unsqueeze(1)
+        if self.interface == "sparse5":
+            Hk = Ht.unsqueeze(2)
+            p = mv3(Hk, self.kp_p[fut] - self.root_p[f][:, None, None])  # (B,K,6,3)
+            r = mat_to_6d(mm3(Hk, self.kp_R[fut]))  # (B,K,6,6)
+            feats = torch.cat((p[:, :, 0], r[:, :, 0], r[:, :, 1], torch.cat((p[:, :, 2:], r[:, :, 2:]), -1).flatten(-2)), -1)
+            return feats.reshape(f.shape[0], -1)
         dp = mv3(Ht, self.root_p[fut] - self.root_p[f].unsqueeze(1))
         rot = mat_to_6d(mm3(Ht, self.root_R[fut]))
         feats = torch.cat(

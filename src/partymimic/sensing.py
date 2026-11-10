@@ -68,6 +68,9 @@ class SensingCfg:
     noise_gravity: float = 0.05
     noise_ref_ori: float = 0.05
     """Uniform observation-noise half-widths (defaults: SuperMimic paper Table A.1)."""
+    noise_kp_pos: float = 0.01
+    noise_kp_ori: float = 0.05
+    """--interface sparse5: half-widths on the keypoint error block (m, rad)."""
     delay_hold_prob: float | None = None
     """None: no observation delay. Otherwise a 0/1 policy-step lag per sensor group, kept with this
     probability each step and resampled otherwise."""
@@ -79,17 +82,18 @@ class SensingCfg:
         return self.delay_hold_prob is not None or self.imu is not None or self.joint_vel_filter is not None
 
 
-def obs_noise(cfg: SensingCfg, J: int) -> torch.Tensor:
-    return torch.cat(
-        (
-            torch.full((J,), cfg.noise_joint_pos),
-            torch.full((J,), cfg.noise_joint_vel),
-            torch.full((3,), cfg.noise_ang_vel),
-            torch.full((3,), cfg.noise_gravity),
-            torch.zeros(J),
-            torch.full((6,), cfg.noise_ref_ori),
-        )
-    )
+def obs_noise(cfg: SensingCfg, J: int, interface: str = "joint") -> torch.Tensor:
+    parts = [
+        torch.full((J,), cfg.noise_joint_pos),
+        torch.full((J,), cfg.noise_joint_vel),
+        torch.full((3,), cfg.noise_ang_vel),
+        torch.full((3,), cfg.noise_gravity),
+        torch.zeros(J),
+        torch.full((6,), cfg.noise_ref_ori),
+    ]
+    if interface == "sparse5":  # mdp.MDP.kp_err: 4 positions, 4 + 1 orientations
+        parts += [torch.full((12,), cfg.noise_kp_pos), torch.full((15,), cfg.noise_kp_ori)]
+    return torch.cat(parts)
 
 
 def _normalize(v: torch.Tensor) -> torch.Tensor:
@@ -121,6 +125,7 @@ class ObsPipeline:
         self.J, self.obs_dim, self.device = J, mdp.obs_dim, device
         # delay group of every observation dim: q, qd, angular velocity, attitude (gravity + ref ori); -1 = exact
         group = [0] * J + [1] * J + [2] * 3 + [3] * 3 + [-1] * J + [3] * 6
+        group += [0] * (self.obs_dim - len(group))  # sparse5 keypoint errors: forward kinematics of the joint encoders
         self.group = torch.tensor([max(g, 0) for g in group], device=device)
         self.delayed = torch.tensor([g >= 0 for g in group], device=device)
         jf = self.cfg.joint_vel_filter
@@ -225,7 +230,10 @@ class ObsPipeline:
         qd_obs = st["qd_f"] if self.cfg.joint_vel_filter is not None else qd
         g_b = -R_att[..., 2, :]
         rel = mat_to_6d(R_att.transpose(-1, -2) @ self.mdp.motion.root_R[f])
-        return torch.cat((q - self.mdp.default_q - dq0, qd_obs, ang_vel, g_b, a_prev, rel), -1)
+        o = (q - self.mdp.default_q - dq0, qd_obs, ang_vel, g_b, a_prev, rel)
+        if self.mdp.interface == "sparse5":
+            o += (self.mdp.kp_err(R_att, q - dq0, f),)
+        return torch.cat(o, -1)
 
     def observe(self, st: dict, raw: torch.Tensor, noise: bool, delay: bool) -> tuple[torch.Tensor, dict]:
         st = dict(st)

@@ -21,6 +21,39 @@ def mlp(inp: int, hidden: list[int], out: int, act=nn.ELU, layer_norm: bool = Fa
     return nn.Sequential(*layers)
 
 
+class FrozenMLP(nn.Module):
+    """A trained ELU MLP with its input standardization, held as buffers: no optimizer, EMA or --pi_opt grouping of the
+    module that owns it touches it, and it is saved and exported with that module's state_dict."""
+
+    def __init__(self, inp: int, hidden: list[int], out: int):
+        super().__init__()
+        dims = [inp, *hidden, out]
+        self.n = len(dims) - 1
+        for i, (a, b) in enumerate(zip(dims[:-1], dims[1:])):
+            self.register_buffer(f"w{i}", torch.zeros(b, a))
+            self.register_buffer(f"b{i}", torch.zeros(b))
+        self.register_buffer("mu", torch.zeros(inp))
+        self.register_buffer("sd", torch.ones(inp))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = (x - self.mu) / self.sd
+        for i in range(self.n):
+            x = nn.functional.linear(x, getattr(self, f"w{i}"), getattr(self, f"b{i}"))
+            if i < self.n - 1:
+                x = nn.functional.elu(x)
+        return x
+
+    @torch.no_grad()
+    def load_from(self, net: nn.Sequential, mu: torch.Tensor, sd: torch.Tensor) -> None:
+        """Copy the Linear layers of ``mlp(inp, hidden, out)`` (trained on (x - mu) / sd)."""
+        lin = [m for m in net if isinstance(m, nn.Linear)]
+        assert len(lin) == self.n
+        for i, m in enumerate(lin):
+            getattr(self, f"w{i}").copy_(m.weight)
+            getattr(self, f"b{i}").copy_(m.bias)
+        self.mu.copy_(mu), self.sd.copy_(sd)
+
+
 class RunningNorm(nn.Module):
     """Running mean/std normalizer; updated from data without gradients, frozen after ``max_count``."""
 
@@ -207,41 +240,130 @@ class WorldModel(nn.Module):
         )
 
 
+class _MHA(nn.Module):
+    """Multi-head attention from Linear projections (Muon sees them as matrices) and scaled_dot_product_attention."""
+
+    def __init__(self, d: int, heads: int):
+        super().__init__()
+        self.h = heads
+        self.q, self.k, self.v, self.o = (nn.Linear(d, d) for _ in range(4))
+
+    def forward(self, x, y, causal: bool = False):
+        B, n, d = x.shape
+        sp = lambda t: t.view(B, -1, self.h, d // self.h).transpose(1, 2)  # noqa: E731
+        out = nn.functional.scaled_dot_product_attention(sp(self.q(x)), sp(self.k(y)), sp(self.v(y)), is_causal=causal)
+        return self.o(out.transpose(1, 2).reshape(B, n, d))
+
+
+def _sinusoid(n: int, d: int) -> torch.Tensor:
+    pos = torch.arange(n, dtype=torch.float32).unsqueeze(1)
+    i = torch.arange(0, d, 2, dtype=torch.float32)
+    ang = pos / 10000 ** (i / d)
+    return torch.stack((ang.sin(), ang.cos()), -1).flatten(1)
+
+
+class XAttnEncoder(nn.Module):
+    """RGMT's dynamics-conditioned command encoder: a causal Transformer block over the (normalized) observation history
+    gives the dynamics embedding h_t (its newest token); the query MLP(h_t) attends to the goal frames' tokens (MLP +
+    sinusoidal position) in one pre-LN cross-attention block; u_t = LN(...) in R^d."""
+
+    def __init__(self, obs_dim: int, frame_dim: int, K: int, hist: int, d: int = 128, heads: int = 4):
+        super().__init__()
+        self.K = K
+        self.obs_in = mlp(obs_dim, [d], d, act=nn.SiLU)
+        self.register_buffer("pos_h", _sinusoid(hist, d))
+        self.ln_h1, self.sa, self.ln_h2, self.ff_h = nn.LayerNorm(d), _MHA(d, heads), nn.LayerNorm(d), mlp(d, [2 * d], d, act=nn.SiLU)
+        self.q_mlp = mlp(d, [d], d, act=nn.SiLU)
+        self.cmd = mlp(frame_dim, [d], d, act=nn.SiLU)
+        self.register_buffer("pos_c", _sinusoid(K, d))
+        self.ln_q, self.xa, self.ln_s, self.ff = nn.LayerNorm(d), _MHA(d, heads), nn.LayerNorm(d), mlp(d, [2 * d], d, act=nn.SiLU)
+        self.ln_out = nn.LayerNorm(d)
+
+    def forward(self, o_n: torch.Tensor, g_n: torch.Tensor) -> torch.Tensor:
+        x = self.obs_in(o_n) + self.pos_h
+        x = x + self.sa(self.ln_h1(x), self.ln_h1(x), causal=True)
+        x = x + self.ff_h(self.ln_h2(x))
+        q = self.q_mlp(x[:, -1:])  # (B, 1, d)
+        Z = self.cmd(g_n.unflatten(-1, (self.K, -1))) + self.pos_c
+        s = q + self.xa(self.ln_q(q), Z)
+        s = s + self.ff(self.ln_s(s))
+        return self.ln_out(s).squeeze(1)
+
+
 class Policy(nn.Module):
-    """a = dec(enc(g), o_{t-9:t}); deterministic, latent z in R^32 bounded by tanh.
+    """a = dec(enc(g), o_{t-9:t}); deterministic, latent z in R^32 bounded by tanh. ``ref_enc`` = "xattn": the latent is
+    XAttnEncoder(o_{t-9:t}, g) in R^xattn_dim instead (it depends on the state, so ``encode`` does not exist).
 
     ``ref_skip`` = (offset, q0, alpha) (--pi_ref_skip): reference-action skip connection,
     a = (q_ref(f+1) - q0) / alpha + dec(...), with q_ref(f+1) read from the raw (unnormalized) goal vector at
-    ``offset``; the network only learns the correction to tracking the reference with the PD controller."""
+    ``offset``; the network only learns the correction to tracking the reference with the PD controller.
+
+    ``obs_err`` > 0 (--interface sparse5): the last obs_err entries of every observation are the keypoint error block
+    (mdp.MDP.kp_err); the reference encoder does not see it and the decoder gets it of the newest step only.
+
+    ``kp_skip`` = (alpha, hidden) (--kp_skip, sparse5): the reference-action skip with an estimated reference,
+    a = kp2q(g) / alpha + dec(...), kp2q a FrozenMLP from the raw goal to q_ref(f+1) - q0, fit to the motion library
+    before training. ``kp_aux`` > 0 (--kp_aux): a linear head ``aux`` on the reference latent (``latent``) with that
+    many outputs, the auxiliary prediction of the goal frames' joint positions."""
 
     def __init__(self, obs_dim: int, goal_dim: int, act_dim: int, hist: int = 10, z_dim: int = 32,
-                 enc_hidden=(2048, 1024, 512, 256), dec_hidden=(2048, 1024, 512, 256), ref_skip=None):  # fmt: skip
+                 enc_hidden=(2048, 1024, 512, 256), dec_hidden=(2048, 1024, 512, 256), ref_skip=None,
+                 ref_enc: str = "mlp", goal_frames: int = 10, xattn_dim: int = 128, xattn_heads: int = 4,
+                 obs_err: int = 0, kp_skip=None, kp_aux: int = 0):  # fmt: skip
         super().__init__()
-        self.hist = hist
+        self.hist, self.obs_err = hist, obs_err
+        base = obs_dim - obs_err
         self.ref_off = None
         if ref_skip is not None:
             self.ref_off = ref_skip[0]
             self.register_buffer("ref_q0", torch.tensor(ref_skip[1], dtype=torch.float32))
             self.register_buffer("ref_alpha", torch.tensor(ref_skip[2], dtype=torch.float32))
-        self.enc = mlp(goal_dim, list(enc_hidden), z_dim)
-        self.dec = mlp(z_dim + obs_dim * hist, list(dec_hidden), act_dim)
+        self.xattn = ref_enc == "xattn"
+        if self.xattn:
+            z_dim = xattn_dim
+            self.enc = XAttnEncoder(base, goal_dim // goal_frames, goal_frames, hist, xattn_dim, xattn_heads)
+        else:
+            self.enc = mlp(goal_dim, list(enc_hidden), z_dim)
+        self.dec = mlp(z_dim + base * hist + obs_err, list(dec_hidden), act_dim)
         with torch.no_grad():
             self.dec[-1].weight.mul_(0.01)
             self.dec[-1].bias.zero_()
         self.obs_norm = RunningNorm(obs_dim)
         self.goal_norm = RunningNorm(goal_dim)
+        self.kp2q = None
+        if kp_skip is not None:
+            self.kp2q = FrozenMLP(goal_dim, list(kp_skip[1]), act_dim)
+            self.register_buffer("kp_alpha", torch.tensor(kp_skip[0], dtype=torch.float32))
+        self.aux = nn.Linear(z_dim, kp_aux) if kp_aux else None
 
     def forward(self, obs_hist: torch.Tensor, goal: torch.Tensor, z: torch.Tensor | None = None) -> torch.Tensor:
         """obs_hist: (B, hist, obs_dim) noisy observations, newest last. ``z`` (optional) is
         ``encode(goal)`` computed beforehand."""
-        o = self.obs_norm(obs_hist).flatten(-2)
-        if z is None:
+        o_n = self.obs_norm(obs_hist)
+        o = o_n.flatten(-2)
+        if self.obs_err:
+            o = torch.cat((o_n[..., : -self.obs_err].flatten(-2), o_n[..., -1, -self.obs_err :]), -1)
+            o_n = o_n[..., : -self.obs_err]
+        if self.xattn:
+            z = run_mlp(lambda x: self.enc(x, self.goal_norm(goal)), o_n)
+        elif z is None:
             z = self.encode(goal)
         a = run_mlp(self.dec, torch.cat((z, o), -1))
         if self.ref_off is not None:
             q_ref = goal[..., self.ref_off : self.ref_off + a.shape[-1]]
             a = a + (q_ref - self.ref_q0) / self.ref_alpha
+        if self.kp2q is not None:
+            a = a + self.kp2q(goal) / self.kp_alpha
         return a
+
+    def latent(self, obs_hist: torch.Tensor, goal: torch.Tensor) -> torch.Tensor:
+        """The reference latent the decoder gets (``encode(goal)``, or the cross-attention output on obs_hist)."""
+        if not self.xattn:
+            return self.encode(goal)
+        o_n = self.obs_norm(obs_hist)
+        if self.obs_err:
+            o_n = o_n[..., : -self.obs_err]
+        return run_mlp(lambda x: self.enc(x, self.goal_norm(goal)), o_n)
 
     def encode(self, goal: torch.Tensor) -> torch.Tensor:
         """Motion latent z from the goal features (reference only, independent of the robot state)."""
@@ -261,10 +383,14 @@ PRUNED_OFF = {
     "eprobe_share": 0.0, "act_cot_clip": 0.0, "action_target": None, "real_v": 0.0, "real_td": 0.0, "sil_multi": False,
     "samp_fix": False, "fail_fix": False, "bin_debias": False, "start_recent": 0.0, "wide_mix": 0.0, "critic_ens": 1,
     "vgrad_w": 1.0, "v_smooth": 0.0, "rise_focus": 0.0, "rise_relax": 0.0, "wm_ground_w": 0.0, "bin_fix": True,
+    "flight_relax": 0.0, "feas_relax": 0.0, "cmd_noise": 0.0, "fall_share": 0.0, "pace_hard": None, "contact_trunc": False,
+    "mpc_teacher": 0.0, "state_gnorm": 0, "critic_hidden": "256,128", "v_hi": 0.0, "v_target": 0.0, "v_huber": 0.0,
     # these also change the networks (inputs or architecture)
     "wm_pd": False, "pi_arch": "mlp", "pi_fourier": None, "pi_goal_feet": False, "wm_contact": 0.0, "heading": "x",
+    "goal_offsets": "", "id_ff": 0.0, "safe_frames": False,
 }  # fmt: skip
-PRUNED_NET = ("wm_pd", "pi_arch", "pi_fourier", "pi_goal_feet", "wm_contact", "heading")
+PRUNED_NET = ("wm_pd", "pi_arch", "pi_fourier", "pi_goal_feet", "wm_contact", "heading", "goal_offsets", "id_ff",
+              "safe_frames")  # fmt: skip
 
 
 def check_pruned(a_: dict, nets_only: bool = False, what: str = "this run") -> None:
@@ -280,12 +406,25 @@ def check_pruned(a_: dict, nets_only: bool = False, what: str = "this run") -> N
 def policy_kwargs(a_: dict, robot) -> dict:
     """Policy keyword arguments of a run with the training arguments ``a_``."""
     check_pruned(a_, nets_only=True)
-    return {"ref_skip": policy_ref_skip(a_, robot)}
+    kw = {"ref_skip": policy_ref_skip(a_, robot)}
+    if a_.get("ref_enc", "mlp") != "mlp":
+        kw.update(ref_enc=a_["ref_enc"], goal_frames=a_["goal_frames"], xattn_dim=a_.get("xattn_dim", 128),
+                  xattn_heads=a_.get("xattn_heads", 4))
+    if a_.get("interface", "joint") != "joint":
+        from .mdp import obs_err_dim
+
+        kw["obs_err"] = obs_err_dim(a_["interface"])
+    if a_.get("kp_skip", False):
+        kw["kp_skip"] = (robot.action_scale_list(), tuple(int(x) for x in a_["kp_hidden"].split(",")))
+    if a_.get("kp_aux", 0.0) > 0:
+        kw["kp_aux"] = a_["goal_frames"] * len(robot.default_joint_pos_list())
+    return kw
 
 
 def policy_ref_skip(a_: dict, robot):
-    """Policy(ref_skip=...) argument of a run with the training arguments ``a_`` (None without --pi_ref_skip)."""
-    if not a_.get("pi_ref_skip", False):
+    """Policy(ref_skip=...) argument of a run with the training arguments ``a_`` (None without --pi_ref_skip, and with
+    --interface sparse5, whose goal has no joint positions: the action base is the default pose q0)."""
+    if not a_.get("pi_ref_skip", False) or a_.get("interface", "joint") != "joint":
         return None
     from .motion import GOAL_Q_OFFSET
 

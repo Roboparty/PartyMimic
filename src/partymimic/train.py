@@ -20,6 +20,9 @@ parser.add_argument("--motion_dir", type=str, default=None, help="defaults to th
 parser.add_argument("--log_dir", type=str, default=os.path.join(REPO, "logs", "run"))
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--resume", type=str, default=None, help="last.pt of a run to continue")
+parser.add_argument("--init", type=str, default=None,
+                    help="last.pt whose world model, policy and critic start this run (fine-tuning, e.g. on a few clips); "
+                         "optimizers, learning-rate control and reset statistics start fresh")
 parser.add_argument("--iterations", type=int, default=12000)
 parser.add_argument("--ckpt_every", type=int, default=2000)
 parser.add_argument("--ckpt_minutes", type=float, default=0.0, help="also checkpoint every n minutes of training wall-clock")
@@ -36,6 +39,18 @@ parser.add_argument("--warmup_steps", type=int, default=64, help="sim steps befo
 parser.add_argument("--horizon", type=int, default=32)
 parser.add_argument("--goal_frames", type=int, default=10)
 parser.add_argument("--hist", type=int, default=10)
+parser.add_argument("--interface", type=str, default="joint", choices=("joint", "sparse5"),
+                    help="reference interface of the policy (motion.INTERFACES): joint = root motion + joint positions / "
+                         "velocities per goal frame; sparse5 = pelvis / head / wrist / ankle poses per goal frame and an "
+                         "explicit keypoint-error block for the decoder, with --kp_skip and --kp_aux on by default")
+parser.add_argument("--kp_skip", action=ON, default=None,
+                    help="sparse5 (default on): reference-action skip on an estimated reference, a = kp2q(goal) / alpha + dec(...), "
+                         "kp2q an MLP from the goal to q_ref(f+1) - q0 fit to the motion library before training, frozen")
+parser.add_argument("--kp_hidden", type=str, default="1024,1024,512", help="--kp_skip: hidden widths of kp2q")
+parser.add_argument("--kp_steps", type=int, default=20000, help="--kp_skip: Adam steps (batch 8192) of the kp2q fit")
+parser.add_argument("--kp_aux", type=float, default=None,
+                    help="sparse5 (default 1.0): weight of an auxiliary loss on the policy, a linear head on the reference latent "
+                         "predicting the goal frames' joint positions (rad, mean squared error)")
 parser.add_argument("--gamma", type=float, default=0.99)
 parser.add_argument("--lam", type=float, default=0.95)
 parser.add_argument("--action_noise", type=float, default=0.1)
@@ -52,6 +67,11 @@ parser.add_argument("--div_k", type=int, default=24,
                     help="reset sampling: the uniform share by motion diversity, k-means clusters of the bins' motion "
                          "features with mass ~ (bins in the cluster)^--div_tau (0 = by duration)")
 parser.add_argument("--div_tau", type=float, default=0.0)
+parser.add_argument("--ref_enc", type=str, default="mlp", choices=("mlp", "xattn"),
+                    help="motion encoder: mlp = enc(goal); xattn = dynamics-conditioned cross-attention, a causal "
+                         "Transformer over the observation history queries the goal frames (RGMT)")
+parser.add_argument("--xattn_dim", type=int, default=128)
+parser.add_argument("--xattn_heads", type=int, default=4)
 # ---- world model ----
 parser.add_argument("--wm_hidden", type=str, default="1024,1024,1024", help="world-model MLP widths")
 parser.add_argument("--wm_structured", action=ON, default=True,
@@ -105,6 +125,12 @@ parser.add_argument("--lr_decay_by", type=int, default=1400,
                     help="with --lr_decay_ret: start the decay at this iteration at the latest, also if the training return "
                          "has not reached --lr_decay_ret (0 = no deadline)")
 args = parser.parse_args()
+if args.kp_skip is None:
+    args.kp_skip = args.interface == "sparse5"
+if args.kp_aux is None:
+    args.kp_aux = 1.0 if args.interface == "sparse5" else 0.0
+assert args.interface == "sparse5" or not (args.kp_skip or args.kp_aux > 0), "--kp_skip / --kp_aux: --interface sparse5 only"
+assert not (args.resume and args.init), "--resume or --init"
 
 import torch
 import torch.nn as nn
@@ -137,6 +163,7 @@ robot = get_robot(args.robot)
 J = robot.num_joints
 kin = Kinematics(robot, dev)
 motion = MotionLib.from_dir(args.motion_dir or robot.motion_dir, robot, kin, dev)
+motion.set_interface(args.interface, robot.tracked_bodies)
 layout = XiLayout(robot, dev)
 normalize_xi = layout.normalize
 _rc, _s = RewardCfg(), args.std_scale
@@ -158,6 +185,42 @@ wm = WorldModel(J, layout.dim, use_prev_action=robot.has_action_delay, hidden=wi
                 structured=args.wm_structured, dt=CONTROL_DT).to(dev)  # fmt: skip
 pi = Policy(mdp.obs_dim, GOAL_DIM, J, hist=Hh, enc_hidden=widths(args.enc_hidden), dec_hidden=widths(args.dec_hidden),
             **policy_kwargs(vars(args), robot)).to(dev)
+Q0 = torch.tensor(robot.default_joint_pos_list(), device=dev)
+
+
+def fit_kp2q(dst: networks.FrozenMLP) -> None:
+    """--kp_skip: fit kp2q (goal -> q_ref(f+1) - q0) on all library frames but a held-out 5%, then copy it into dst."""
+    g = torch.Generator(device=dev).manual_seed(args.seed)
+    perm = torch.randperm(motion.num_frames, device=dev, generator=g)
+    val, tr = perm[: motion.num_frames // 20], perm[motion.num_frames // 20 :]
+    data = lambda f: (motion.goal(f, K), motion.q[motion.future_frames(f, K)[:, 0]] - Q0)  # noqa: E731
+    X0 = motion.goal(tr[torch.randint(len(tr), (65536,), device=dev, generator=g)], K)
+    mu, sd = X0.mean(0), X0.std(0).clamp(min=1e-3)
+    net = networks.mlp(GOAL_DIM, list(widths(args.kp_hidden)), J).to(dev)
+    opt = torch.optim.Adam(net.parameters(), lr=1e-3)
+    t0 = time.time()
+    for step in range(args.kp_steps):
+        for grp in opt.param_groups:
+            grp["lr"] = 1e-3 * 0.5 * (1 + math.cos(math.pi * step / args.kp_steps))
+        X, Y = data(tr[torch.randint(len(tr), (8192,), device=dev, generator=g)])
+        loss = ((net((X - mu) / sd) - Y) ** 2).mean()
+        opt.zero_grad(set_to_none=True)
+        loss.backward()
+        opt.step()
+    with torch.no_grad():
+        se, se0 = torch.zeros(J, device=dev), torch.zeros(J, device=dev)
+        for s in range(0, len(val), 65536):
+            X, Y = data(val[s : s + 65536])
+            se += ((net((X - mu) / sd) - Y) ** 2).sum(0)
+            se0 += (Y**2).sum(0)
+    rms, rms0 = (se / len(val)).sqrt(), (se0 / len(val)).sqrt()
+    print(f"--kp_skip: kp2q fit in {time.time() - t0:.0f} s, held-out joint RMS {rms.mean():.4f} rad (max {rms.max():.4f}; "
+          f"default pose {rms0.mean():.4f})", flush=True)
+    dst.load_from(net, mu, sd)
+
+
+if args.kp_skip:
+    fit_kp2q(pi.kp2q)
 pi_l = copy.deepcopy(pi).to(ldev) if args.pipeline else pi  # --pipeline: the trained policy; pi acts with its copy
 critic = Critic(CRITIC_IN).to(ldev)
 assert not args.lr_decay_by or args.lr_decay_ret > 0, "--lr_decay_by needs --lr_decay_ret"
@@ -183,6 +246,7 @@ opt_v = FlatAdam(critic.parameters(), args.lr)
 GC_ON = args.v_gcons > 0
 SIL_DIAG = torch.zeros(2, device=ldev)  # --sil: share of starts with G > V, self-imitation loss
 GC_DIAG = torch.zeros(2, device=ldev)  # --v_gcons: relative squared error of grad_s V, cosine to the target
+KP_DIAG = torch.zeros(1, device=ldev)  # --kp_aux: RMS error (rad) of the latent's joint-position prediction
 ALPHA = torch.tensor(robot.action_scale_list(), device=ldev)  # action units -> joint-setpoint radians
 
 start_it, wall_offset, sim_steps = 0, 0.0, 0
@@ -224,6 +288,17 @@ if args.resume:
     else:
         print(f"--resume: no control state in {args.resume}; LR trigger and reset statistics restart", flush=True)
     # a warm restart either way: the replay buffer, simulator state and random streams are not saved
+    del ck
+elif args.init:
+    ck = torch.load(args.init, map_location=dev, weights_only=False)
+    assert "critic" in ck, f"--init {args.init}: no critic (use last.pt)"
+    check_pruned(ck.get("args", {}), what=args.init)
+    wm.load_state_dict(ck["wm"]), pi.load_state_dict(ck.get("pi_live", ck["pi"])), critic.load_state_dict(ck["critic"])
+    pi_l.load_state_dict(ck.get("pi_live", ck["pi"]))
+    if pi_avg is not None:
+        pi_avg.module.load_state_dict(ck["pi"])
+        pi_avg.n_averaged.fill_(1)
+    print(f"--init: weights of {args.init} (it {ck['iteration']})", flush=True)
     del ck
 
 
@@ -267,9 +342,11 @@ def _imag_step(S, o_hist, a_prev, f, xi, xi_n, g, z):
 
 def _imag_goals(f):
     """Goals of the reference frames f .. f + H (they do not depend on the imagined states) and the policy's motion
-    latents of the first H, each as one batched pass."""
+    latents of the first H, each as one batched pass (None with --ref_enc xattn, whose latent depends on the state)."""
     fs = (f.unsqueeze(0) + torch.arange(HZ + 1, device=f.device).unsqueeze(1)).flatten()
     G = motion.goal(fs, K).view(HZ + 1, f.shape[0], -1)
+    if args.ref_enc != "mlp":
+        return G, [None] * HZ
     return G, pi.encode(G[:HZ].flatten(0, 1)).view(HZ, f.shape[0], -1)
 
 
@@ -372,11 +449,15 @@ HOOK_AT = {int(x) for x in os.environ.get("PM_HOOK_AT", "").split(",") if x}
 
 def sample_valid_starts(B: int):
     # fixed-size selection without reading the valid count on the host: stable-sort the valid candidates first (only
-    # starts within H frames of a clip end are invalid, < 1%)
+    # starts within H frames of a clip end are invalid, < 1% of a large library); fewer than B valid ones (a library of
+    # a few short clips) are repeated cyclically
     s, h = buffer.sample_starts(2 * B, Hh)
     f = s["f"]
     ok = f + HZ <= motion.clip_end[motion.clip_id[f]]
-    idx = torch.sort((~ok).to(torch.uint8), stable=True).indices[:B]
+    order = torch.sort((~ok).to(torch.uint8), stable=True).indices
+    j = torch.arange(B, device=f.device)
+    nv = ok.sum().clamp(min=1)
+    idx = order[torch.where(j < nv, j, j % nv)]
     return {k: v[idx] for k, v in s.items()}, {k: v[idx] for k, v in h.items()}
 
 
@@ -523,6 +604,7 @@ def policy_step():
     with torch.no_grad():
         o_hist = mdp.obs(unflatten_state(h["s"]), h["a_prev"], h["xi"], h["f"])
     o_hist = mdp.add_noise(o_hist)
+    o_hist0 = o_hist
     set_requires_grad(wm, False)
     set_requires_grad(critic, False)
     B = args.pi_batch
@@ -555,6 +637,11 @@ def policy_step():
         l_sil = (wgt * (((As[0] - a_rec) * ALPHA) ** 2).mean(-1)).mean()
         loss = loss + args.sil * l_sil
         SIL_DIAG[1].copy_(l_sil.detach())
+    if args.kp_aux > 0:
+        q_hat = pi.aux(pi.latent(o_hist0, G_all[0]))
+        l_kp = ((q_hat - (motion.q[motion.future_frames(s["f"], K)] - Q0).flatten(1)) ** 2).mean()
+        loss = loss + args.kp_aux * l_kp
+        KP_DIAG[0].copy_(l_kp.detach().sqrt())
     if GC_ON:
         for St in Ss[:-1]:
             for x in St:
@@ -833,8 +920,8 @@ class Link:
 
 
 LEARNER_FNS = ("sample_valid_starts", "real_returns", "_imag_step", "_imag_goals", "_reward_term", "_critic_input",
-               "_critic_loss", "_gae_targets", "value_grad_targets", "gcons_loss", "gated_step", "ema_update",
-               "policy_step", "critic_fit")  # fmt: skip
+               "_critic_loss", "_gae_targets", "_gc_coords", "_gc_scale", "value_grad_targets", "gcons_loss",
+               "gated_step", "ema_update", "policy_step", "critic_fit")  # fmt: skip
 
 
 def learner_namespace():
@@ -855,7 +942,7 @@ def learner_namespace():
     buffer_l = ReplayBuffer(args.buffer_steps, args.num_envs, ldev, J, layout.dim)
     buffer_l.use_device_ptr(device_size=True)
     L = dict(globals())
-    L.update(pi=pi_l, wm=copy.deepcopy(wm).to(ldev), buffer=buffer_l, motion=motion_l, mdp=mdp_l, kin=kin_l,
+    L.update(pi=pi_l, Q0=Q0.to(ldev), wm=copy.deepcopy(wm).to(ldev), buffer=buffer_l, motion=motion_l, mdp=mdp_l, kin=kin_l,
              normalize_xi=_to_device(layout, ldev).normalize, dev=ldev)  # fmt: skip
     for name in LEARNER_FNS:
         f = globals()[name]
@@ -1062,7 +1149,8 @@ for it in range(start_it, args.iterations):
         print(f"it {it + 1} | {wall_h:.3f} h | wm {row[3]:.4f} e8 {row[4]:.4f} | pi {row[5]:.3f} v {row[6]:.4f} imag_r {row[7]:.3f} surv {row[9]:.3f} "
               f"| sim_r {row[10]:.3f} ep_len {row[11]:.1f} ep_ret {row[12]:.3f} term {term_frac:.2f} | {ips:.2f} it/s"
               + (" | G>V {:.2f} sil {:.4f}".format(*SIL_DIAG.tolist()) if args.sil > 0 else "")
-              + (" | gcons err {:.3f} cos {:.3f}".format(*GC_DIAG.tolist()) if GC_ON else ""), flush=True)  # fmt: skip
+              + (" | gcons err {:.3f} cos {:.3f}".format(*GC_DIAG.tolist()) if GC_ON else "")
+              + (" | kp_aux rms {:.4f}".format(*KP_DIAG.tolist()) if args.kp_aux > 0 else ""), flush=True)  # fmt: skip
         stats = {k: [] for k in stats}
         agg = {k: [] for k in agg}
     wall = time.time() - t_start

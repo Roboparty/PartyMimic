@@ -44,6 +44,9 @@ dev = "cuda:0"
 robot = get_robot(args.robot)
 kin = Kinematics(robot, dev)
 motion = MotionLib.from_dir(robot.motion_dir, robot, kin, dev)
+_args_json = os.path.join(os.path.dirname(args.ckpts[0]), "args.json")  # one interface for all checkpoints (load_policy)
+motion.set_interface(json.load(open(_args_json)).get("interface", "joint") if os.path.exists(_args_json) else "joint",
+                     robot.tracked_bodies)
 mdp = MDP(kin, motion, torch.tensor(robot.default_joint_pos_list(), device=dev), XiLayout(robot, dev).dim, robot.sensing)
 C = len(motion.names)
 FEET = [robot.tracked_bodies.index(b) for b in ("left_ankle_roll_link", "right_ankle_roll_link")]
@@ -51,6 +54,7 @@ FEET = [robot.tracked_bodies.index(b) for b in ("left_ankle_roll_link", "right_a
 
 def load_policy(ck):
     a_ = ck["args"]
+    assert a_.get("interface", "joint") == motion.interface, "all checkpoints need the same --interface"
     widths = lambda key: tuple(int(x) for x in a_.get(key, "2048,1024,512,256").split(","))  # noqa: E731
     pi = Policy(mdp.obs_dim, motion.goal_dim(a_["goal_frames"]), robot.num_joints, hist=a_["hist"],
                 enc_hidden=widths("enc_hidden"), dec_hidden=widths("dec_hidden"), **policy_kwargs(a_, robot)).to(dev)  # fmt: skip

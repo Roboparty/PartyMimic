@@ -33,6 +33,7 @@ parser.add_argument("--dr_parts", type=str, default="all", choices=["all", "dyna
                     help="with --dr_from: take only its simulator randomization or only its sensing")
 parser.add_argument("--repeats", type=int, default=1, help="rollouts per clip")
 parser.add_argument("--seed", type=int, default=0)
+parser.add_argument("--out", type=str, default=None, help="with --ckpt: write the full result (per-clip values too) here")
 args = parser.parse_args()
 
 import dataclasses
@@ -83,6 +84,9 @@ if args.dr_from:
     print("pd_gain_scale on this robot:", robot.dr.pd_gain_scale)
 kin = Kinematics(robot, dev)
 motion = MotionLib.from_dir(args.motion_dir or robot.motion_dir, robot, kin, dev)
+_args_json = os.path.join(os.path.dirname(args.ckpt) if args.ckpt else args.run_dir, "args.json")
+motion.set_interface(json.load(open(_args_json)).get("interface", "joint") if os.path.exists(_args_json) else "joint",
+                     robot.tracked_bodies)
 mdp = MDP(kin, motion, torch.tensor(robot.default_joint_pos_list(), device=dev), XiLayout(robot, dev).dim, robot.sensing)
 C = len(motion.names)
 N = C * args.repeats
@@ -93,6 +97,7 @@ clip_of = torch.arange(N, device=dev) % C
 def evaluate(env: TrackingSim, ck: dict, record: str | None = None) -> dict:
     a_ = ck["args"]
     K, Hh = a_["goal_frames"], a_["hist"]
+    assert a_.get("interface", "joint") == motion.interface, "checkpoint and the run's args.json differ in --interface"
     networks.AMP_DTYPE = torch.bfloat16 if a_.get("amp", "none") == "bf16" else None
     widths = lambda key, default: tuple(int(x) for x in a_.get(key, default).split(","))  # noqa: E731
     pi = Policy(mdp.obs_dim, motion.goal_dim(K), robot.num_joints, hist=Hh, enc_hidden=widths("enc_hidden", "2048,1024,512,256"),
@@ -135,6 +140,9 @@ def evaluate(env: TrackingSim, ck: dict, record: str | None = None) -> dict:
         "failed": [motion.names[i] for i in (fail_c > 0).nonzero().flatten().tolist()],
         "per_clip": {motion.names[i]: round(norm_c[i].item(), 4) for i in range(C)},
         "per_clip_fail_rate": {motion.names[i]: round(fail_c[i].item(), 3) for i in range(C) if fail_c[i] > 0},
+        # share of the clip played before the termination (1 if it never terminated)
+        "per_clip_progress": dict(zip(motion.names, (steps / (clip_len - 1).float()).clamp(max=1).view(args.repeats, C)
+                                      .mean(0).round(decimals=3).tolist())),
     }
     if record:
         np.savez_compressed(record, names=np.array(motion.names), **{k: torch.stack(v).numpy() for k, v in traj.items()},
@@ -148,7 +156,9 @@ env = TrackingSim(sim_cfg, N, robot, motion, mdp, dev, eval_mode=True, randomize
 if args.ckpt:
     ck = torch.load(args.ckpt, map_location=dev)
     res = evaluate(env, ck, args.record)
-    print(json.dumps({k: v for k, v in res.items() if k != "per_clip"}, indent=1))
+    print(json.dumps({k: v for k, v in res.items() if not k.startswith("per_clip")}, indent=1))
+    if args.out:
+        json.dump(res, open(args.out, "w"), indent=1)
     if args.record is None and (args.dr_from or args.repeats > 1):
         tag = f"dr-{args.dr_from or 'none'}{'' if args.dr_parts == 'all' else '-' + args.dr_parts}_x{args.repeats}"
         json.dump(res, open(args.ckpt.replace(".pt", f"_eval_{tag}.json"), "w"), indent=1)
