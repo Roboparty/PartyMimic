@@ -17,8 +17,8 @@ videos, the recipe ablation and the SuperMimic full-factor ablation.
 
 ## GPU memory
 
-Peak memory per card on the full G1 library (300 iterations, `nvidia-smi` once a second). One standard 24 GB
-RTX 4090 is enough:
+Peak memory per card on the full G1 library (300 iterations, `nvidia-smi` once a second). With the default
+recipe, one standard 24 GB RTX 4090 is enough (`--ref_enc xattn`: see [Train](#train)):
 
 | Mode | GPU 0 | GPU 1 | it/s |
 |---|---:|---:|---:|
@@ -142,6 +142,22 @@ bash scripts/train.sh logs/g1_p0  --robot g1mj --motion_dir <npz clips> --seed 0
 With `--pipeline`, the policy learns from the previous iteration's data and world model, and the actor collects
 with the policy from the previous update. On the 9,173-clip G1 set this trains 12k iterations in 16 min instead of
 30 min, at the same Loc/Man error (23.2 vs 23.6 mm, 2 seeds; Ground 78.3 vs 74.3 mm).
+
+**Options.**
+
+- `--ref_enc xattn`: a cross-attention reference encoder. It is more precise on ground motions (Ground 4–8 mm lower,
+  Dance 2 mm lower, Loc/Man unchanged; 2 seeds on a larger mixed library) and takes 1.6x the training time on a 4090.
+  It needs more than 24 GB. On a 24 GB card, add `--pi_batch 1024`: Ground and high-dynamic errors are then 2–3 mm
+  above the full batch, and Loc/Man and Dance are unchanged.
+- `--interface sparse5`: the policy is given only the pelvis, head, wrist and ankle poses of the reference, with no
+  joint angles (e.g. for teleoperation or video pose). A keypoint-to-joint network is fit to the library before
+  training and restores the reference-action skip (`--kp_skip`). An auxiliary joint-angle loss is added
+  (`--kp_aux 1.0`). Both are on by default with sparse5. On RP1 (2 seeds) it reaches Loc/Man 21.1 mm and Ground
+  100.0 mm, against 19.5 and 94.3 mm with joint references. Export it with `tools/export_deploy_onnx.py` (input
+  `ref_kp`).
+- `--init <run>/last.pt`: fine-tunes a trained policy on a few clips, e.g. one hard clip before it is deployed. Three
+  held-out G1 ground transitions went from 120–415 mm to 24–36 mm in 2k iterations (about 50 s per 250 iterations after
+  start-up). It does not help on short, highly dynamic clips.
 
 Checkpoints are written every 2,000 iterations (`ckpt_002000.pt`, ...). On G1, Loc/Man already beats the
 previous best at 2,000 iterations. At 8,000 iterations Loc/Man, Dance and Ground are all the best in the comparison.
