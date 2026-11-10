@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PartyMimic: general humanoid motion tracking in minutes on one GPU</title>
-<meta name="description" content="One whole-body tracking policy for a 10.7k-clip motion library, trained in about half an hour on one RTX 4090 with a differentiable world model; lowest mean held-out tracking error on locomotion, manipulation, dance, ground and extreme martial-arts motions, on Unitree G1 and RoboParty RP1, from joint or sparse keypoint references.">
+<meta name="description" content="PartyMimic: one whole-body humanoid tracking policy trained in 26 min on one 24 GB RTX 4090 on 41 h of diverse motion; zero-shot on five held-out test sets up to extreme martial arts, 20.5 mm on manipulation; MLP or attention, joint references or five keypoints; Unitree G1 and RoboParty RP1.">
 <style>
   :root { --red: #c62828; --ink: #1d1d1f; --mute: #6b6b70; --line: #e3e3e8; --bg2: #f6f7f9; }
   * { box-sizing: border-box; }
@@ -61,36 +61,73 @@
   .card em.gpu { display: inline-block; vertical-align: middle; margin-left: 6px; padding: 2px 8px; border-radius: 6px;
                  font-size: .78rem; font-style: normal; font-weight: 700; color: #fff; background: #76b900; }
   .pills span.hot { background: #76b900; color: #fff; border-color: #76b900; font-weight: 700; }
+  .pills span i { font-style: normal; font-size: .7rem; letter-spacing: .06em; text-transform: uppercase; opacity: .7;
+                  margin-right: 6px; }
+  html { scroll-behavior: smooth; }
+  h2[id], h3[id], header[id] { scroll-margin-top: 16px; }
+  nav.toc { display: none; }
+  @media (min-width: 1180px) {
+    body { padding-left: 210px; }
+    nav.toc { display: block; position: fixed; top: 0; left: 0; bottom: 0; width: 210px; overflow-y: auto;
+              padding: 28px 14px 28px 20px; border-right: 1px solid var(--line); background: #fff; font-size: .9rem; }
+    nav.toc a { display: block; padding: 5px 10px; margin: 1px 0; border-radius: 6px; color: var(--ink);
+                text-decoration: none; line-height: 1.35; }
+    nav.toc a.sub { padding-left: 24px; font-size: .84rem; color: var(--mute); }
+    nav.toc a:hover { background: var(--bg2); }
+    nav.toc a.on { background: #fdecec; color: var(--red); font-weight: 600; }
+    nav.toc a.brand { font-size: 1.25rem; font-weight: 800; margin-bottom: 12px; padding-left: 10px; }
+    nav.toc a.brand span { color: var(--red); }
+    nav.toc a.brand.on { background: none; color: var(--ink); }
+    nav.toc a.code { margin-top: 14px; background: var(--ink); color: #fff; text-align: center; font-weight: 600; }
+    .links a.mob { display: none; }
+  }
 </style>
 </head>
 <body>
-<header>
+<nav class="toc" aria-label="Contents">
+  <a class="brand" href="#top"><span>Party</span>Mimic</a>
+  <a href="#top">Overview</a>
+  <a href="#results">Results</a>
+  <a class="sub" href="#data">Training data</a>
+  <a class="sub" href="#encoders">MLP or attention</a>
+  <a href="#sparse">Sparse keypoints</a>
+  <a href="#videos">Sim2sim videos</a>
+  <a class="sub" href="#fast">Fast Extreme clips</a>
+  <a href="#speed">LAFAN speed</a>
+  <a href="#recipe">Recipe</a>
+  <a href="#supermimic">SuperMimic ablation</a>
+  <a href="#use">Use it</a>
+  <a class="code" href="https://github.com/Roboparty/PartyMimic">Code &#8599;</a>
+</nav>
+<header id="top">
   <h1><span>Party</span>Mimic</h1>
-  <p class="tagline">One whole-body tracking policy for <b>41 hours of diverse motion</b>, <b>trained in
-    26 minutes on a single 24 GB RTX 4090</b>. On five held-out test sets, from walking to <b>extreme martial
-    arts</b>, it has the <b>lowest mean tracking error</b> of every method we compared, on two humanoids, with an MLP
-    or an attention network, from full joint references or from <b>five keypoints</b>.</p>
-  <div class="pills"><span class="hot">26 min on 1&times; RTX 4090 (24 GB)</span><span>41 h of motion</span>
-    <span>MLP or attention</span><span>Joints or 5 keypoints</span><span>Unitree G1 &middot; RoboParty RP1</span></div>
-  <div class="links"><a href="https://github.com/Roboparty/PartyMimic">Code</a><a href="#results">Results</a><a href="#sparse">Sparse keypoints</a>
-    <a href="#videos">Videos</a><a href="#data">Data</a><a href="#speed">LAFAN speed</a><a href="#recipe">Recipe</a><a href="#supermimic">SuperMimic ablation</a></div>
+  <p class="tagline">One whole-body tracking policy, <b>fast</b>: trained in 26 min on 1&times; RTX 4090
+    (24 GB), on <b>41 h of diverse motion</b>. It <b>generalizes</b> to five held-out test sets up to extreme
+    martial arts and is the <b>most precise</b> of every method we compared, with <b>two architectures</b> (MLP,
+    attention) and <b>two modalities</b> (joint references or five keypoints).</p>
+  <div class="pills"><span class="hot"><i>Fast</i>26 min on 1&times; RTX 4090 (24 GB)</span>
+    <span><i>Diverse data</i>41 h</span><span><i>Generalizes</i>5 held-out sets</span>
+    <span><i>Precise</i>20.5 mm</span><span><i>2 architectures</i>MLP | attention</span>
+    <span><i>2 modalities</i>joints | 5 keypoints</span></div>
+  <div class="links"><a href="https://github.com/Roboparty/PartyMimic">Code</a><a class="mob" href="#results">Results</a><a class="mob" href="#sparse">Sparse keypoints</a>
+    <a class="mob" href="#videos">Videos</a><a class="mob" href="#speed">LAFAN speed</a><a class="mob" href="#supermimic">SuperMimic ablation</a></div>
 </header>
 <main>
 
 <div class="cards six">
   <div class="card"><i>Fast</i><b>26 min <em class="gpu">RTX 4090 &middot; 24 GB</em></b><span>on one
     consumer GPU for the full library, G1 and RP1 alike (attention: 41 min). The other methods took 50&ndash;120 min.</span></div>
+  <div class="card"><i>Diverse data</i><b>41 h</b><span>10,731 clips from LAFAN1, BONES-SEED, kneeling /
+    crawling and KungfuAthlete: 864 distinct motion types (<a href="#data">how measured</a>).</span></div>
+  <div class="card"><i>Generalizes</i><b>5 held-out sets</b><span>Loco, Mani, Dance, Ground and 308 extreme martial-arts
+    clips, all zero-shot. 92% of the Dance and 85% of the Extreme windows
+    have no close match in training.</span></div>
   <div class="card"><i>Precise</i><b>20.5 mm</b><span>body error on held-out manipulation, G1;
     the best other method: 28.2 mm (Mimic Lite, &minus;27%).
     RP1: 16.5 vs 27.3 mm (&minus;40%).</span></div>
-  <div class="card"><i>Generalizes</i><b>5 held-out sets</b><span>Loco, Mani, Dance, Ground and 308 extreme martial-arts
-    clips. 92% of the Dance and 85% of the Extreme windows
-    have no close match in training.</span></div>
-  <div class="card"><i>Diverse data</i><b>41 h</b><span>10,731 clips from LAFAN1, BONES-SEED, kneeling /
-    crawling and KungfuAthlete: 864 distinct motion types (<a href="#data">how measured</a>).</span></div>
-  <div class="card"><i>Two networks</i><b>MLP | attention</b><span>the MLP is the fastest and fits a 24 GB card; the
-    attention encoder is the most precise (G1 43.5 mm).</span></div>
-  <div class="card"><i>Two inputs</i><b>joints | 5 keypoints</b><span>from only pelvis, head, wrist and ankle poses, RP1
+  <div class="card"><i>Two architectures</i><b>MLP | attention</b><span>the MLP is the fastest and fits a 24 GB card; the
+    attention encoder is the most precise (G1 43.5 mm mean).</span></div>
+  <div class="card"><i>Two modalities</i><b>joints | 5 keypoints</b><span>from only pelvis, head, wrist and ankle poses, RP1
     reaches 48.7 mm, below every baseline given the full joint reference (60.4 mm).</span></div>
 </div>
 
@@ -443,7 +480,7 @@
     deployment evaluator. This is why PartyMimic trains on the evaluator's collision model.</li>
 </ul>
 
-<h2>Use it</h2>
+<h2 id="use">Use it</h2>
 <p>Instructions for data, training, export and evaluation are in the
   <a href="https://github.com/Roboparty/PartyMimic#readme">README</a>.</p>
 <ul>
@@ -462,5 +499,18 @@
   Videos are derived from motion data that is not covered by this repository's MIT License.
 </footer>
 </main>
+<script>
+(() => {
+  const links = [...document.querySelectorAll("nav.toc a[href^='#']")];
+  const targets = links.map(a => document.getElementById(a.getAttribute("href").slice(1)));
+  const spy = () => {
+    let k = 0;
+    targets.forEach((t, i) => { if (t && t.getBoundingClientRect().top < 140) k = i; });
+    links.forEach((a, i) => a.classList.toggle("on", i === k));
+  };
+  addEventListener("scroll", spy, {passive: true});
+  spy();
+})();
+</script>
 </body>
 </html>
