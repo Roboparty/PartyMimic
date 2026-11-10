@@ -113,7 +113,7 @@
     attention) and <b>two modalities</b> (joint references or five keypoints).</p>
   <div class="pills"><span class="hot"><i>Fast</i>26 min on 1&times; RTX 4090 (24 GB)</span>
     <span><i>Diverse data</i>41 h</span><span><i>Generalizes</i>5 held-out sets</span>
-    <span><i>Precise</i>20.5 mm</span><span><i>2 architectures</i>MLP | attention</span>
+    <span><i>Precise</i>20.5 | 16.5 mm</span><span><i>2 architectures</i>MLP | attention</span>
     <span><i>2 modalities</i>joints | 5 keypoints</span></div>
   <div class="links"><a href="https://github.com/Roboparty/PartyMimic">Code</a><a class="mob" href="#results">Results</a><a class="mob" href="#sparse">Sparse keypoints</a>
     <a class="mob" href="#videos">Videos</a><a class="mob" href="#speed">LAFAN speed</a><a class="mob" href="#supermimic">SuperMimic ablation</a></div>
@@ -128,9 +128,9 @@
   <div class="card"><i>Generalizes</i><b>5 held-out sets</b><span>Loco, Mani, Dance, Ground and 308 extreme martial-arts
     clips, all zero-shot. 92% of the Dance and 85% of the Extreme windows
     have no close match in training.</span></div>
-  <div class="card"><i>Precise</i><b>20.5 mm</b><span>body error on held-out manipulation, G1;
-    the best other method: 28.2 mm (Mimic Lite, &minus;27%).
-    RP1: 16.5 vs 27.3 mm (&minus;40%).</span></div>
+  <div class="card"><i>Precise</i><b>20.5 | 16.5 mm</b><span>body error on held-out manipulation,
+    G1 | RP1; the best other method: 28.2 mm (Mimic Lite, &minus;27%)
+    | 27.3 mm (BlinkMimic, &minus;40%).</span></div>
   <div class="card"><i>Two architectures</i><b>MLP | attention</b><span>the MLP is the fastest and fits a 24 GB card; the
     attention encoder is the most precise (G1 43.5 mm mean).</span></div>
   <div class="card"><i>Two modalities</i><b>joints | 5 keypoints</b><span>from only pelvis, head, wrist and ankle poses, RP1
