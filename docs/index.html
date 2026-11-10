@@ -63,6 +63,10 @@
   .pills span.hot { background: #76b900; color: #fff; border-color: #76b900; font-weight: 700; }
   .pills span i { font-style: normal; font-size: .7rem; letter-spacing: .06em; text-transform: uppercase; opacity: .7;
                   margin-right: 6px; }
+  header a.lab img { height: 46px; display: block; margin: 0 auto 18px; }
+  nav.toc a.lab { padding: 0 10px 14px; }
+  nav.toc a.lab:hover { background: none; }
+  nav.toc a.lab img { width: 100%; max-width: 160px; display: block; }
   html { scroll-behavior: smooth; }
   h2[id], h3[id], header[id] { scroll-margin-top: 16px; }
   nav.toc { display: none; }
@@ -85,6 +89,7 @@
 </head>
 <body>
 <nav class="toc" aria-label="Contents">
+  <a class="lab" href="https://github.com/Roboparty"><img src="static/roboparty_lab.png" alt="RoboParty Lab"></a>
   <a class="brand" href="#top"><span>Party</span>Mimic</a>
   <a href="#top">Overview</a>
   <a href="#results">Results</a>
@@ -100,6 +105,7 @@
   <a class="code" href="https://github.com/Roboparty/PartyMimic">Code &#8599;</a>
 </nav>
 <header id="top">
+  <a class="lab" href="https://github.com/Roboparty"><img src="static/roboparty_lab.png" alt="RoboParty Lab"></a>
   <h1><span>Party</span>Mimic</h1>
   <p class="tagline">One whole-body tracking policy, <b>fast</b>: trained in 26 min on 1&times; RTX 4090
     (24 GB), on <b>41 h of diverse motion</b>. It <b>generalizes</b> to five held-out test sets up to extreme
