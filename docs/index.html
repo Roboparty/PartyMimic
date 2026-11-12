@@ -101,6 +101,7 @@
   <a href="#speed">LAFAN speed</a>
   <a href="#recipe">Recipe</a>
   <a href="#supermimic">SuperMimic ablation</a>
+  <a href="#sim2real">Sim2real</a>
   <a href="#use">Use it</a>
   <a class="code" href="https://github.com/Roboparty/PartyMimic">Code &#8599;</a>
 </nav>
@@ -116,7 +117,7 @@
     <span><i>Precise</i>20.5 | 16.5 mm</span><span><i>2 architectures</i>MLP | attention</span>
     <span><i>2 modalities</i>joints | 5 keypoints</span></div>
   <div class="links"><a href="https://github.com/Roboparty/PartyMimic">Code</a><a class="mob" href="#results">Results</a><a class="mob" href="#sparse">Sparse keypoints</a>
-    <a class="mob" href="#videos">Videos</a><a class="mob" href="#speed">LAFAN speed</a><a class="mob" href="#supermimic">SuperMimic ablation</a></div>
+    <a class="mob" href="#videos">Videos</a><a class="mob" href="#speed">LAFAN speed</a><a class="mob" href="#supermimic">SuperMimic ablation</a><a class="mob" href="#sim2real">Sim2real</a></div>
 </header>
 <main>
 
@@ -172,7 +173,10 @@
   <tr class="ours"><td>PartyMimic, sparse keypoints, MLP</td><td class="n">29 min</td><td class="n"><b>48.7</b></td><td class="n">24.7<small>100%</small></td><td class="n">19.1<small>100%</small></td><td class="n">38.3<small>99%</small></td><td class="n">100.9<small>90%</small></td><td class="n">60.7<small>98%</small></td></tr>
   <tr class="ours"><td>PartyMimic, sparse keypoints, attention</td><td class="n">46 min</td><td class="n"><b>47.8</b></td><td class="n">24.1<small>100%</small></td><td class="n">18.2<small>100%</small></td><td class="n">36.8<small>97%</small></td><td class="n">100.0<small>90%</small></td><td class="n">60.1<small>98%</small></td></tr>
 </table></div>
-<p class="note">Scored by the <a href="https://egalahad.github.io/sim2real/leaderboard/">sim2real leaderboard</a>
+<p class="note">PartyMimic rows and the shipped checkpoints use the prior defaults (<code>std_scale 0.35</code>,
+  no Muon weight decay). The updated recipe (<code>--muon_wd 0.1 --std_scale 0.6</code>) matches that tracking to
+  within seed noise and improves deployment metrics (<a href="#recipe">Recipe</a>, <a href="#sim2real">Sim2real</a>).
+  Scored by the <a href="https://egalahad.github.io/sim2real/leaderboard/">sim2real leaderboard</a>
   MuJoCo sim2sim evaluator after ONNX export: every clip played from start to end, failure when the pelvis height error
   exceeds 0.3 m or the gravity direction error exceeds 0.8. Error is the local body position error over the tracked part
   of each clip; completion is the tracked share of each clip; Mean is the mean error of the five sets. All trained methods ran 12,000 iterations (NablaMimic: its
@@ -362,8 +366,10 @@
   <tr><th>Factor</th><th>Setting</th><th class="n">Effect when removed</th><th>Why</th></tr>
   <tr><td>Muon optimizer</td><td><code>--pi_opt muon --wm_opt muon</code></td><td class="n">+10.7 mm (Dance +25)</td>
       <td>Orthogonalized updates keep the rare motions' nearly orthogonal gradients from being drowned by the majority.</td></tr>
-  <tr><td>Narrow reward kernels</td><td><code>--std_scale 0.35</code></td><td class="n">+6.5 mm (Dance +10.8)</td>
-      <td>BPTT follows the reward's slope, which vanishes at cm-level errors with the default widths.</td></tr>
+  <tr><td>Muon weight decay</td><td><code>--muon_wd 0.1</code></td><td class="n">&minus;2.4 mm five-set mean</td>
+      <td>torch.optim.Muon's default decoupled decay; the only official SuperMimic choice that clearly helps PartyMimic.</td></tr>
+  <tr><td>Reward kernels</td><td><code>--std_scale 0.6</code></td><td class="n">0.35: +smoothness cost; 1.0: +5.5 mm</td>
+      <td>Narrower than BeyondMimic's 1.0 so BPTT still has slope at cm-level errors; wider than 0.35 so the policy is less aggressive for deployment (see <a href="#sim2real">Sim2real</a>).</td></tr>
   <tr><td>Horizon 32</td><td><code>--horizon 32</code></td><td class="n">16 steps: +5.9 mm</td>
       <td>Shorter chains lean on &nabla;<sub>s</sub>V, which is only loosely fit.</td></tr>
   <tr><td>Reference-action skip</td><td><code>--pi_ref_skip</code></td><td class="n">+5.6 mm</td>
@@ -485,6 +491,53 @@
     then fall on the leaderboard evaluator. Any factor that changes the simulator must be re-checked under the
     deployment evaluator. This is why PartyMimic trains on the evaluator's collision model.</li>
 </ul>
+
+<h3 id="official-on-pm">Official SuperMimic choices on PartyMimic (full library)</h3>
+<p>After the official code opened, we ported its design choices as switches and tested each one on PartyMimic's
+  full library (mix_kf, 10,731 clips, 12,000 iterations, G1). Score: mean body-position error over Loco/Mani,
+  Ground, Dance, Extreme and XM14 (mm, lower is better). Official SuperMimic itself cannot run here (it needs the
+  private <code>mjlab_research</code>); the ported row turns every official choice on and PartyMimic's extras off.</p>
+<div class="scroll"><table>
+  <tr><th>Change on PartyMimic</th><th class="n">Seeds</th><th class="n">Five-set mean</th><th class="n">Time</th><th class="n">VRAM</th><th>Verdict</th></tr>
+  <tr><td>Prior defaults (<code>std_scale 0.35</code>, <code>muon_wd 0</code>)</td><td class="n">5</td><td class="n">54.7</td><td class="n">0.44 h</td><td class="n">22 GB</td><td>baseline</td></tr>
+  <tr class="sig-better"><td><b>+ <code>--muon_wd 0.1</code></b></td><td class="n">4</td><td class="n"><b>52.3</b></td><td class="n">0.45 h</td><td class="n">22 GB</td><td>better tracking</td></tr>
+  <tr class="sig-better"><td><b>+ <code>--muon_wd 0.1 --std_scale 0.6</code> (final)</b></td><td class="n">4</td><td class="n"><b>54.3</b></td><td class="n">0.52 h</td><td class="n">22 GB</td><td>same tracking, better sim2real</td></tr>
+  <tr class="neutral"><td>+ policy LN-GELU</td><td class="n">3</td><td class="n">53.0</td><td class="n">0.51 h</td><td class="n">26 GB</td><td>noise / cost</td></tr>
+  <tr class="neutral"><td>+ soft-termination max</td><td class="n">2</td><td class="n">53.2</td><td class="n">0.44 h</td><td class="n">22 GB</td><td>noise</td></tr>
+  <tr class="neutral"><td>+ <code>v_max</code> clamp</td><td class="n">1</td><td class="n">53.2</td><td class="n">0.45 h</td><td class="n">22 GB</td><td>noise</td></tr>
+  <tr class="neutral"><td>+ WM 10 batches / iter</td><td class="n">1</td><td class="n">52.9</td><td class="n">0.52 h</td><td class="n">22 GB</td><td>noise</td></tr>
+  <tr class="neutral"><td>+ goal stride 5</td><td class="n">2</td><td class="n">53.9</td><td class="n">0.44 h</td><td class="n">22 GB</td><td>noise</td></tr>
+  <tr class="neutral"><td>+ official ReturnSampler (keep fail/div shares)</td><td class="n">1</td><td class="n">54.0</td><td class="n">0.44 h</td><td class="n">22 GB</td><td>noise</td></tr>
+  <tr class="sig-worse"><td>+ ReturnSampler alone (drop fail/div)</td><td class="n">1</td><td class="n">60.1</td><td class="n">0.45 h</td><td class="n">22 GB</td><td>worse</td></tr>
+  <tr class="sig-worse"><td>+ reward kernel 1.0</td><td class="n">2</td><td class="n">59.8</td><td class="n">0.58 h</td><td class="n">22 GB</td><td>worse tracking</td></tr>
+  <tr class="sig-worse"><td>+ action-rate penalty &minus;0.25</td><td class="n">4</td><td class="n">56.9</td><td class="n">0.47 h</td><td class="n">22 GB</td><td>smoother, worse tracking</td></tr>
+  <tr class="sig-worse"><td>Official SuperMimic (ported, fp32)</td><td class="n">2</td><td class="n">68.6</td><td class="n">1.60 h</td><td class="n">32 GB</td><td>far worse</td></tr>
+</table></div>
+<p class="note">Only Muon weight decay clearly improves PartyMimic. Widening the reward kernel to 0.6 keeps the
+  five-set mean within noise of the prior defaults and is the change that improves foot-slip and action smoothness
+  under deployment-like perturbations (next section). Everything else from the official release is noise or worse
+  on this library; dropping PartyMimic's failure / diversity reset shares hurts a lot.</p>
+
+<h2 id="sim2real">Sim2real-oriented evaluation</h2>
+<p>G1 actuators, action scale and default pose match the public mjlab BeyondMimic model used by official SuperMimic;
+  the gap people report on hardware is not from those. We score completion, body error, joint-target rate / jerk,
+  torque saturation and foot slip under perturbations the training never saw (delay, PD scale, mass, push, low
+  friction, soft foot contact). Same clips for every method.</p>
+<div class="scroll"><table>
+  <tr><th>Method</th><th class="n">Seeds</th><th class="n">Nominal % / mm</th><th class="n">Train DR jerk</th>
+      <th class="n">Combo slip cm/s</th><th class="n">Soft-foot slip cm/s</th></tr>
+  <tr><td>Prior defaults</td><td class="n">2</td><td class="n">98.2 / 18.1</td><td class="n">70</td><td class="n">5.72</td><td class="n">8.10</td></tr>
+  <tr><td>+ Muon wd 0.1</td><td class="n">2</td><td class="n">98.3 / 17.9</td><td class="n">68</td><td class="n">5.66</td><td class="n">8.22</td></tr>
+  <tr class="sig-better"><td><b>Final (<code>muon_wd 0.1</code>, <code>std_scale 0.6</code>)</b></td><td class="n">4</td><td class="n">98.2 / 20.8</td><td class="n"><b>58</b></td><td class="n"><b>5.14</b></td><td class="n"><b>7.05</b></td></tr>
+  <tr><td>+ kernel 1.0</td><td class="n">2</td><td class="n">98.3 / 24.9</td><td class="n">52</td><td class="n">4.81</td><td class="n">6.49</td></tr>
+  <tr><td>+ action-rate &minus;0.25</td><td class="n">4</td><td class="n">98.0 / 18.7</td><td class="n">46</td><td class="n">5.29</td><td class="n">7.36</td></tr>
+  <tr><td>Official SuperMimic (ported)</td><td class="n">2</td><td class="n">97.7 / 33.8</td><td class="n">51</td><td class="n">5.40</td><td class="n">6.73</td></tr>
+</table></div>
+<p class="note">Completion stays &ge;96% under delay 20&nbsp;ms, PD&times;0.75, push and friction 0.25 for every method.
+  Switching the solver to the official 10 iterations changes nothing; soft-foot contact is where the prior recipe
+  slips more than the ported official policy. The final recipe closes most of that gap while keeping tracking far
+  ahead of the port (20.8 vs 33.8&nbsp;mm nominal). Shipped checkpoints were trained with <code>std_scale 0.35</code>;
+  retrain with the new defaults for the numbers above.</p>
 
 <h2 id="use">Use it</h2>
 <p>Instructions for data, training, export and evaluation are in the

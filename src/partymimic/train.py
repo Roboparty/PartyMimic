@@ -56,7 +56,7 @@ parser.add_argument("--lam", type=float, default=0.95)
 parser.add_argument("--action_noise", type=float, default=0.1)
 parser.add_argument("--amp", type=str, default="bf16", choices=["none", "bf16"], help="autocast dtype for MLP matmuls")
 # ---- reward and resets ----
-parser.add_argument("--std_scale", type=float, default=0.35,
+parser.add_argument("--std_scale", type=float, default=0.6,
                     help="training reward only: scale of the body / root position and orientation kernel widths "
                          "(evaluation keeps SuperMimic's reward)")
 parser.add_argument("--contact_reward", type=float, default=0.25,
@@ -95,6 +95,8 @@ parser.add_argument("--pi_opt", type=str, default="muon", choices=["adam", "muon
                          "decoder at Adam's update RMS (same lr), Adam on vectors")
 parser.add_argument("--pi_muon_io", action=ON, default=True,
                     help="--pi_opt muon on the first and last Linear of the policy MLPs too (else Adam there)")
+parser.add_argument("--muon_wd", type=float, default=0.1,
+                    help="decoupled weight decay on Muon groups (torch.optim.Muon default; 0 disables)")
 parser.add_argument("--pi_beta1", type=float, default=0.9, help="Adam beta1 of the policy")
 parser.add_argument("--pi_clip_value", type=float, default=0.1, help="element-wise policy gradient clip after the norm clip (<= 0: off)")
 parser.add_argument("--pi_ema", type=float, default=0.995,
@@ -230,12 +232,13 @@ adam_kw = lambda d: {"fused": True, "capturable": True, "lr": torch.tensor(args.
 from partymimic.optim import FlatAdam, MuonAdam
 
 if args.wm_opt == "muon":
-    opt_wm = MuonAdam(wm, [wm.net], lr=args.lr, betas=(0.9, 0.999), fused=True, capturable=True, flat_adam=True)
+    opt_wm = MuonAdam(wm, [wm.net], lr=args.lr, betas=(0.9, 0.999), fused=True, capturable=True, flat_adam=True,
+                      weight_decay=args.muon_wd)
 else:
     opt_wm = torch.optim.Adam(wm.parameters(), **adam_kw(dev))
 if args.pi_opt == "muon":
     opt_pi = MuonAdam(pi_l, [pi_l.enc, pi_l.dec], lr=args.lr, betas=(args.pi_beta1, 0.95), fused=True, capturable=True,
-                      io=args.pi_muon_io)
+                      io=args.pi_muon_io, weight_decay=args.muon_wd)
 else:
     opt_pi = torch.optim.Adam(pi_l.parameters(), betas=(args.pi_beta1, 0.95), **adam_kw(ldev))
 NONFINITE = torch.zeros((), dtype=torch.long, device=ldev)  # skipped non-finite policy updates

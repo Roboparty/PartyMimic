@@ -15,7 +15,8 @@ the RP1 retargeting, the diversity analysis and the evaluation. Two trained chec
 PartyMimic is a model-based learner in the SuperMimic family. It fits an online MLP world model, trains the policy
 by backpropagating through 32 imagined steps of that model, and uses a critic beyond the horizon. Project page:
 [roboparty.github.io/PartyMimic](https://roboparty.github.io/PartyMimic/) ([`docs/index.html`](docs/index.html)),
-with videos, the data-diversity analysis, the recipe ablation and the SuperMimic full-factor ablation.
+with videos, the data-diversity analysis, the recipe ablation, the SuperMimic full-factor ablation and a
+sim2real-oriented evaluation.
 
 ![Mean held-out error against training compute](docs/static/hero.png)
 
@@ -157,6 +158,8 @@ at 22.6 and 23.4 GB. Checkpoints are written every 2,000 iterations (`ckpt_00200
 
 **Options.**
 
+- Defaults include `--muon_wd 0.1` and `--std_scale 0.6` (see [The recipe](#the-recipe)). The shipped checkpoints
+  were trained with `std_scale 0.35` and no Muon weight decay.
 - `--ref_enc xattn`: the cross-attention reference encoder. Lower error on Dance, Ground and Extreme (tables above)
   for 1.6x the training time. It needs more than 24 GB; on a 24 GB card add `--pi_batch 1024` (G1: 29 min).
 - `--interface sparse5`: the policy gets only the pelvis, head, wrist and ankle poses of the reference, no joint
@@ -232,7 +235,8 @@ earlier 9,173-clip library; the [page](docs/index.html#recipe) explains each fac
 | Factor | Setting | Effect when removed |
 |---|---|---|
 | Muon for policy and world model | `--pi_opt muon --wm_opt muon` | Adam instead: +10.7 mm |
-| Narrow tracking-reward kernels | `--std_scale 0.35` | +6.5 mm |
+| Muon weight decay | `--muon_wd 0.1` | five-set mean +2.4 mm |
+| Tracking-reward kernels | `--std_scale 0.6` | 1.0: +5.5 mm; 0.35: more slip / jerk |
 | 32-step imagination | `--horizon 32` | 16 steps: +5.9 mm |
 | Reference-action skip | `--pi_ref_skip` | +5.6 mm |
 | Policy EMA | `--pi_ema 0.995` | +3.4 mm |
@@ -240,6 +244,11 @@ earlier 9,173-clip library; the [page](docs/index.html#recipe) explains each fac
 | Value-gradient consistency | `--v_gcons 0.5` | +1.0 mm |
 | Diversity-balanced resets | `--div_k 24` | Ground +6–19 mm |
 | Self-imitation | `--sil 1` | +0.5 mm early in training |
+
+Of the official SuperMimic design choices ported onto this recipe, only `--muon_wd 0.1` clearly helps tracking.
+Widening the kernels from 0.35 to 0.6 keeps the five-set mean within noise and reduces foot slip under soft contact
+and other unseen perturbations ([page: Sim2real](docs/index.html#sim2real)). The shipped checkpoints were trained
+with `std_scale 0.35`; retrain for the new defaults.
 
 ## Attribution and license
 
