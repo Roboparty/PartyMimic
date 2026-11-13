@@ -387,10 +387,28 @@
 </table></div>
 
 <h2 id="supermimic">Why SuperMimic works: full-factor ablation</h2>
+<p><b>PPO and SuperMimic differ in where the policy gradient comes from.</b> In PPO the simulator is a black box:
+  each sample contributes one advantage that scales &nabla;<sub>&theta;</sub>log&nbsp;&pi;(a|s). SuperMimic fits a
+  world model on real steps, unrolls the policy 32 steps inside it, scores every imagined state with the analytic
+  tracking reward and the last one with the critic, and backpropagates through the whole chain, so every state tells
+  its action which way to move.</p>
+<figure class="wide">
+  <video src="static/videos/ppo_vs_wm_arch.mp4" autoplay muted loop playsinline controls preload="metadata"></video>
+  <figcaption>One training iteration of each method: forward data flow (blue), then the backward gradient flow (red).
+    In SuperMimic the world model is frozen during the policy step and the same policy weights &theta; are used at
+    every imagined step; c<sub>t</sub> is the soft survival probability and the critic is fit on GAE(&lambda;) targets of the
+    imagined rollouts.</figcaption>
+</figure>
 <p>Stage 1 of the study ablated SuperMimic itself, factor by factor, on our reimplementation (LAFAN-40, G1,
   6,000 iterations per variant, one variant per factor). The score is the normalized evaluation return (mean of the
   last two evaluations, deterministic policy). The baseline over 3 seeds is 0.686 &plusmn; 0.048, and single-seed
   |z| &lt; 1.5 counts as noise. Δ is the change from the baseline.</p>
+<figure>
+  <img src="static/ablation.png" alt="Change of the LAFAN-40 evaluation return from the baseline for every SuperMimic ablation variant, grouped by factor and coloured by verdict">
+  <figcaption>Each bar is one variant's Δ from the baseline, sorted within its factor group; colour is the verdict in the
+    table below, and the grey band is the baseline's seed spread. The three mechanism cuts that score 0.00
+    (<code>gwin1boot</code>, <code>onestep</code>, <code>wmfreeze</code>) run off the scale.</figcaption>
+</figure>
 <details open><summary>All variants</summary>
 <div class="scroll"><table>
   <tr><th>Variant</th><th>What it tests</th><th class="n">Score</th><th class="n">&Delta;</th><th>Verdict</th></tr>
