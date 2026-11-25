@@ -903,15 +903,31 @@
   <div><video src="static/videos/agent_qwen_t3.mp4" autoplay muted loop playsinline controls preload="metadata"></video>Left: third person. Right: the head camera the VLM sees. RP1 in MuJoCo, 4&times; speed.</div>
 </div>
 
-<h3 id="agent-load">Carrying loads</h3>
-<p>The policy never observes the load: a crate is welded to both hands in MuJoCo, and the policy (RP1, sparse5,
-  terrain-trained, with the hidden 0&ndash;2 kg wrist payload in training) tracks the reference as usual.</p>
-<div class="videos">
-  <div><video src="static/videos/payload_rp1_crate_walk.mp4" autoplay muted loop playsinline controls preload="metadata"></video>2 kg crate: walk 3.5 m in 8 s</div>
-  <div><video src="static/videos/payload_rp1_crate_box.mp4" autoplay muted loop playsinline controls preload="metadata"></video>1.5 kg crate: step up onto a box</div>
-</div>
-<p class="note">MuJoCo sim2sim; the hands are drawn as simple white hands of the DH116s size instead of the dexterous
-  hand meshes.</p>
+<h3 id="agent-load">Picking up a low crate, by real contact</h3>
+<p>A planner that writes a few keyframes (stand, hands beside the crate, squeeze, lift to the chest) and interpolates
+  them can send six keypoints that no single robot pose reaches at once: hands at a low crate while the pelvis only
+  moves straight down, or the centre of mass ahead of the feet once the crate is in the hands. A whole-body IK layer
+  between the planner and the policy re-solves every 50 Hz frame on the robot model (floating base, joint limits):
+  feet held, hand points on the crate's side faces, the centre of mass of robot and crate kept over the feet, a squat
+  rather than a stoop, knees clear of the crate. Its keypoints, by forward kinematics, are what the policy gets.</p>
+<p>The grasp is real contact. Nothing is welded: the hands collide with the crate and hold it only by friction (crate
+  0.8, hand 0.9). The plan brings the hands down outside the crate, then places them 10&ndash;14 cm inside its side
+  faces, so the policy's tracking error against the crate is the squeeze. The policy (RP1, sparse5, terrain-trained,
+  with the hidden 0&ndash;2 kg wrist payload in training) never observes the crate.</p>
+<figure class="wide">
+  <video src="static/videos/agent_contact_lift.mp4" poster="static/videos/agent_contact_lift.jpg" autoplay muted loop playsinline controls preload="metadata"></video>
+  <figcaption>Left: the planner's keyframes sent to the policy directly. Right: the same keyframes through the
+    whole-body IK layer. Inset: the hands on the crate, with contact forces drawn. A 3 kg crate at 0.20 m, then 5 kg
+    at 0.30 m; RP1 in MuJoCo.</figcaption>
+</figure>
+<p>Over 6 start poses, crate heights 0.10&ndash;0.40 m and 1.5, 3 and 5 kg, the keyframes sent directly lift no crate
+  and fall in 39% of the runs (every run at 0.10&ndash;0.15 m). Through the IK layer (squeeze 10&ndash;14 cm, 216 runs)
+  59% are lifted and 3% fall: 81% at 1.5 kg, 64% at 3 kg, 33% at 5 kg. Most remaining failures are the grip: the
+  squeeze the policy produces levels off near 36&ndash;39 N per hand, while 5 kg needs about 27 N per hand at this
+  friction just to be held, so heavy crates slide out. The policy was trained with a hidden wrist payload, not to
+  squeeze.</p>
+<p class="note">MuJoCo sim2sim with elliptic friction cones (impratio 10); each hand's collision shape is the RP1
+  model's capsule.</p>
 
 <footer>
   PartyMimic builds on <a href="https://github.com/fuyichen0725/blinkmimic">BlinkMimic</a>,
